@@ -258,6 +258,24 @@ type SeriesSummary struct {
 	Author   string `json:"author,omitempty"`
 	Category string `json:"category,omitempty"`
 	Words    int64  `json:"words,omitempty"`
+	// HeatText 是服务端给的热度文案（如 "5418万热度"），来自推荐理由/次要信息行。
+	HeatText string `json:"heat_text,omitempty"`
+	// Rating 是评分原文（如 "8.4"），只有部分列表面（搜索/榜单）提供。
+	Rating string `json:"rating,omitempty"`
+	// Tags 是分类名以 "·" 连接的标签串（如 "剧情·重生·逆袭"）。
+	Tags string `json:"tags,omitempty"`
+	// PlayCount 是播放量（series_play_cnt / play_cnt），可用时填充。
+	// JSON 名用 list_play_count，避免与 Series.PlayCount（play_count）冲突。
+	PlayCount int64 `json:"list_play_count,omitempty"`
+	// PlatformCode 是 video_platform（0=书籍/有声书，其余为视频平台），列表面可用时填充。
+	// JSON 名用 platform_code，避免与 Series.Platform（同名 platform）冲突。
+	Platform int `json:"platform_code,omitempty"`
+	// TotalPrice 是书籍的整本币价（total_price），>0 表示该书参与金币付费；
+	// 0 表示免费。只在书籍列表面（分类落地页）填充。
+	TotalPrice int64 `json:"total_price,omitempty"`
+	// AudioBookIDs 是该小说关联的真人有声书 book_id 列表
+	//（related_audio_bookids），只在书籍列表面填充。
+	AudioBookIDs []string `json:"audio_book_ids,omitempty"`
 }
 
 // Series 是一部短剧的详情视图。
@@ -446,6 +464,13 @@ type NewRelease struct {
 	// Note 是预告文案（"预计10月26日上线"）。
 	Heat string `json:"heat,omitempty"`
 	Note string `json:"note,omitempty"`
+	// Platform 是上游 video_platform：0=小说/有声书，1/2/3/4/5/1024=视频；
+	// 只有带 subscribe_data 的条目才有值，无该行时为 -1（未知）。
+	Platform int `json:"platform"`
+	// ContentType 是上游 content_type：1=真人短剧，1004=漫剧。
+	ContentType int `json:"content_type,omitempty"`
+	// BookExist 表示该条目同时存在书籍形态（多为有声书/小说信号）。
+	BookExist bool `json:"book_exist,omitempty"`
 }
 
 // Person 是演员或角色的主页。
@@ -483,6 +508,30 @@ type Work struct {
 	// Heat 是短剧的原始热度分；Plays 是其播放量。
 	Heat  int64 `json:"heat,omitempty"`
 	Plays int64 `json:"plays,omitempty"`
+}
+
+// CommentItem 是评论/弹幕一体流（comment_type 20）里的一条。
+// Text 是正文，OffsetMs 是它在分集时间轴上的毫秒位置（弹幕形态），
+// DiggCount 是点赞数（评论形态按它降序排列）。上游不下发昵称和头像，
+// 只有 UserID；显示名由调用方按需生成（例如「剧友」加 UserID 后 4 位）。
+type CommentItem struct {
+	Text      string `json:"text"`
+	UserID    string `json:"user_id,omitempty"`
+	DiggCount int64  `json:"digg_count,omitempty"`
+	OffsetMs  int64  `json:"offset_ms,omitempty"`
+}
+
+// CommentPage 是 comment/list 的一个时间窗口。Cursor 是服务端给出的
+// 同窗口续页游标；NextStartMs 是下一窗口的起始毫秒，调用方把它和
+// Cursor 一起传回 CommentOptions 即可继续翻页。ReportedCount 是
+// 服务端在游标里自报的弹幕总数，匿名身份实际下发的条数可能少于它；
+// 游标里没有这个数时为 0。
+type CommentPage struct {
+	Items         []CommentItem `json:"items"`
+	Cursor        string        `json:"cursor,omitempty"`
+	NextStartMs   int64         `json:"next_start_ms,omitempty"`
+	HasMore       bool          `json:"has_more"`
+	ReportedCount int           `json:"reported_count,omitempty"`
 }
 
 // HotSearch 是查询前的搜索页：猜你想搜一行，以及其下的热榜。
@@ -558,6 +607,18 @@ type RankItem struct {
 	Details   []string `json:"details,omitempty"`
 	// Change 是该行相对上一期榜单的变动（如果有）。
 	Change *RankChange `json:"change,omitempty"`
+	// Description 是简介（video_desc），短剧榜单行可用时填充。
+	Description string `json:"description,omitempty"`
+	// Rating 是评分原文（如 "8.4"），来自 video_data.score。
+	Rating string `json:"rating,omitempty"`
+	// HeatText 是热度文案（如 "4386万热度"），来自 secondary_info_list。
+	HeatText string `json:"heat_text,omitempty"`
+	// Category 是主分类名（如 "剧情"），来自 sub_title_list 中 data_type=3 的项。
+	Category string `json:"category,omitempty"`
+	// Actors 是主演名（sub_title_list 中 data_type=23 的项，多个以 " / " 连接）。
+	Actors string `json:"actors,omitempty"`
+	// TagText 是角标文案（如 "新剧"），来自 tag_info.text。
+	TagText string `json:"tag_text,omitempty"`
 }
 
 // RankChange 是榜单行的变动（客户端中的 RankChangeType）。

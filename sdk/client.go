@@ -47,6 +47,10 @@ type Client struct {
 	// deviceResets 是一次调用最多换几台新设备（0 表示不换）。
 	deviceResets int
 	resetter     deviceResetter
+	// contentKeyMu 保护 contentKeys：小说正文的内容键按设备 id 缓存，
+	// 设备轮换后旧键自动失效（键与注册时的设备绑定）。
+	contentKeyMu sync.Mutex
+	contentKeys  map[string]string
 }
 
 // NewClient 根据 opts 创建客户端。Transport 和 ProfileStore 必填；

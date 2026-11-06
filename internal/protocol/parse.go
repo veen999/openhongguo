@@ -2,7 +2,9 @@ package protocol
 
 import (
 	"bytes"
+	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/url"
 	"sort"
@@ -103,26 +105,195 @@ func (f *flexInt64) UnmarshalJSON(b []byte) error {
 	return nil
 }
 
+type subTitleItem struct {
+	Content  string `json:"content"`
+	DataType int    `json:"data_type"`
+}
+
+type categoryName struct {
+	Name string `json:"name"`
+}
+
+// flexScore 是评分字段：搜索面给字符串（"8.2"），榜单面给数字（8.4）。
+type flexScore float64
+
+func (f *flexScore) UnmarshalJSON(b []byte) error {
+	s := strings.TrimSpace(string(b))
+	s = strings.Trim(s, `"`)
+	if s == "" || s == "null" {
+		*f = 0
+		return nil
+	}
+	n, err := strconv.ParseFloat(s, 64)
+	if err != nil {
+		*f = 0
+		return nil
+	}
+	*f = flexScore(n)
+	return nil
+}
+
+// flexCategories 是分类列表：有的面给数组，有的面给 JSON 编码的字符串。
+type flexCategories []categoryName
+
+func (f *flexCategories) UnmarshalJSON(b []byte) error {
+	s := strings.TrimSpace(string(b))
+	if s == "" || s == "null" {
+		*f = nil
+		return nil
+	}
+	if s[0] == '"' {
+		var inner string
+		if err := json.Unmarshal(b, &inner); err != nil {
+			*f = nil
+			return nil
+		}
+		s = inner
+	}
+	var list []categoryName
+	if err := json.Unmarshal([]byte(s), &list); err != nil {
+		*f = nil
+		return nil
+	}
+	*f = list
+	return nil
+}
+
 type catalogVideo struct {
-	SeriesID    flexString `json:"series_id"`
-	Title       string     `json:"title"`
-	VideoDetail struct {
-		Title        string            `json:"series_title"`
-		Intro        string            `json:"series_intro"`
-		Cover        string            `json:"series_cover"`
-		EpisodeCount int               `json:"episode_cnt"`
-		VideoList    []json.RawMessage `json:"video_list"`
-		Cards        []seriesCard      `json:"video_detail_list"`
+	SeriesID          flexString     `json:"series_id"`
+	Title             string         `json:"title"`
+	Cover             string         `json:"cover"`
+	VideoDesc         string         `json:"video_desc"`
+	Score             flexScore      `json:"score"`
+	PlayCnt           flexInt64      `json:"play_cnt"`
+	VideoPlatform     int            `json:"video_platform"`
+	SubTitleList      []subTitleItem `json:"sub_title_list"`
+	SecondaryInfoList []subTitleItem `json:"secondary_info_list"`
+	RecTags           []subTitleItem `json:"rec_tags"`
+	RecText           string         `json:"rec_text"`
+	CategorySchema    flexCategories `json:"category_schema"`
+	VideoDetail       struct {
+		Title          string            `json:"series_title"`
+		Intro          string            `json:"series_intro"`
+		Cover          string            `json:"series_cover"`
+		EpisodeCount   int               `json:"episode_cnt"`
+		VideoList      []json.RawMessage `json:"video_list"`
+		Cards          []seriesCard      `json:"video_detail_list"`
+		SeriesPlayCnt  flexInt64         `json:"series_play_cnt"`
+		CategorySchema flexCategories    `json:"category_schema"`
+		VideoPlatform  int               `json:"video_platform"`
 	} `json:"video_detail"`
 }
 
+// enrichSummary 把列表原始行里的热度/评分/标签/播放量/平台补进 SeriesSummary。
+// 不同列表面（推荐流、搜索、榜单）字段位置不同，逐个来源兜底，缺失保持零值。
+func enrichSummary(s *model.SeriesSummary, v catalogVideo) {
+	if s.Rating == "" && v.Score > 0 {
+		s.Rating = strconv.FormatFloat(float64(v.Score), 'f', -1, 64)
+	}
+	if s.Tags == "" {
+		names := make([]string, 0, 4)
+		for _, c := range v.CategorySchema {
+			if c.Name != "" {
+				names = append(names, c.Name)
+			}
+		}
+		if len(names) == 0 {
+			for _, c := range v.VideoDetail.CategorySchema {
+				if c.Name != "" {
+					names = append(names, c.Name)
+				}
+			}
+		}
+		if len(names) == 0 {
+			for _, it := range v.SubTitleList {
+				if it.DataType == 3 && it.Content != "" {
+					names = append(names, it.Content)
+				}
+			}
+		}
+		if len(names) > 0 {
+			s.Tags = strings.Join(names, "·")
+		}
+	}
+	if s.HeatText == "" && v.RecText != "" {
+		s.HeatText = v.RecText
+	}
+	if s.HeatText == "" {
+		for _, it := range v.SecondaryInfoList {
+			if it.DataType == 1 && it.Content != "" {
+				s.HeatText = it.Content
+				break
+			}
+		}
+	}
+	if s.HeatText == "" {
+		for _, it := range v.SubTitleList {
+			if it.DataType == 27 && it.Content != "" {
+				s.HeatText = it.Content
+				if !strings.Contains(s.HeatText, "热度") {
+					s.HeatText += "热度"
+				}
+				break
+			}
+		}
+	}
+	if s.HeatText == "" {
+		for _, it := range v.RecTags {
+			if it.Content != "" {
+				s.HeatText = it.Content
+				break
+			}
+		}
+	}
+	if s.PlayCount == 0 {
+		s.PlayCount = int64(v.PlayCnt)
+	}
+	if s.PlayCount == 0 {
+		s.PlayCount = int64(v.VideoDetail.SeriesPlayCnt)
+	}
+	if s.Platform == 0 {
+		s.Platform = v.VideoPlatform
+	}
+	if s.Platform == 0 {
+		s.Platform = v.VideoDetail.VideoPlatform
+	}
+	if s.CoverURL == "" {
+		s.CoverURL = v.Cover
+	}
+	if s.Description == "" {
+		s.Description = v.VideoDesc
+	}
+}
+
+// enrichCard 把详情卡（video_detail_list）的分类标签补进 SeriesSummary。
+func enrichCard(s *model.SeriesSummary, card seriesCard) {
+	if s.PlayCount == 0 && card.SeriesPlayCnt > 0 {
+		s.PlayCount = int64(card.SeriesPlayCnt)
+	}
+	if s.Tags != "" {
+		return
+	}
+	names := make([]string, 0, 4)
+	for _, c := range card.CategorySchema {
+		if c.Name != "" {
+			names = append(names, c.Name)
+		}
+	}
+	if len(names) > 0 {
+		s.Tags = strings.Join(names, "·")
+	}
+}
+
 type seriesCard struct {
-	SeriesID     flexString `json:"series_id"`
-	SeriesIDStr  flexString `json:"series_id_str"`
-	Title        string     `json:"series_title"`
-	Intro        string     `json:"series_intro"`
-	Cover        string     `json:"series_cover"`
-	EpisodeCount int        `json:"episode_cnt"`
+	SeriesID       flexString     `json:"series_id"`
+	SeriesIDStr    flexString     `json:"series_id_str"`
+	Title          string         `json:"series_title"`
+	Intro          string         `json:"series_intro"`
+	Cover          string         `json:"series_cover"`
+	EpisodeCount   int            `json:"episode_cnt"`
+	CategorySchema flexCategories `json:"category_schema"`
+	SeriesPlayCnt  flexInt64      `json:"series_play_cnt"`
 }
 
 type cellDetail struct {
@@ -290,10 +461,12 @@ func appendCatalogCell(page *CatalogPage, cell catalogCell) {
 		if count == 0 {
 			count = len(v.VideoDetail.VideoList)
 		}
-		page.Items = append(page.Items, model.SeriesSummary{
+		summaryItem := model.SeriesSummary{
 			ID: id, Title: title, Description: v.VideoDetail.Intro,
 			CoverURL: v.VideoDetail.Cover, EpisodeCount: count,
-		})
+		}
+		enrichSummary(&summaryItem, v)
+		page.Items = append(page.Items, summaryItem)
 	}
 	if cell.VideoDetail != nil {
 		for _, card := range cell.VideoDetail.Cards {
@@ -304,10 +477,12 @@ func appendCatalogCell(page *CatalogPage, cell catalogCell) {
 			if id == "" || card.Title == "" {
 				continue
 			}
-			page.Items = append(page.Items, model.SeriesSummary{
+			cardItem := model.SeriesSummary{
 				ID: id, Title: card.Title, Description: card.Intro,
 				CoverURL: card.Cover, EpisodeCount: card.EpisodeCount,
-			})
+			}
+			enrichCard(&cardItem, card)
+			page.Items = append(page.Items, cardItem)
 		}
 	}
 	for _, book := range cell.Books {
@@ -453,9 +628,11 @@ func ParseSearchTab(raw []byte, tabType int) (*CatalogPage, error) {
 				title := strings.TrimSpace(v.VideoDetail.Title)
 				id := v.SeriesID.String()
 				if id != "" && title != "" {
-					page.Items = append(page.Items, model.SeriesSummary{
+					searchItem := model.SeriesSummary{
 						ID: id, Title: title, Description: v.VideoDetail.Intro, EpisodeCount: v.VideoDetail.EpisodeCount,
-					})
+					}
+					enrichSummary(&searchItem, v)
+					page.Items = append(page.Items, searchItem)
 					continue
 				}
 				for _, card := range v.VideoDetail.Cards {
@@ -467,10 +644,12 @@ func ParseSearchTab(raw []byte, tabType int) (*CatalogPage, error) {
 					if cid == "" || ctitle == "" {
 						continue
 					}
-					page.Items = append(page.Items, model.SeriesSummary{
+					searchCard := model.SeriesSummary{
 						ID: cid, Title: ctitle, Description: card.Intro,
 						CoverURL: card.Cover, EpisodeCount: card.EpisodeCount,
-					})
+					}
+					enrichCard(&searchCard, card)
+					page.Items = append(page.Items, searchCard)
 				}
 			}
 			for _, book := range row.Books {
@@ -1584,11 +1763,14 @@ func ParseNewReleases(raw []byte) (*NewReleaseResult, error) {
 					Content string `json:"content"`
 				} `json:"rec_tags"`
 				Row *struct {
-					ID    flexString `json:"series_id"`
-					Title string     `json:"title"`
-					Desc  string     `json:"video_desc"`
-					Cover string     `json:"cover"`
-					Count flexInt    `json:"episode_cnt"`
+					ID          flexString `json:"series_id"`
+					Title       string     `json:"title"`
+					Desc        string     `json:"video_desc"`
+					Cover       string     `json:"cover"`
+					Count       flexInt    `json:"episode_cnt"`
+					Platform    int        `json:"video_platform"`
+					ContentType int        `json:"content_type"`
+					BookExist   bool       `json:"book_exist"`
 				} `json:"subscribe_data"`
 			} `json:"subscribe_items"`
 			NextOffset int        `json:"next_offset"`
@@ -1610,7 +1792,7 @@ func ParseNewReleases(raw []byte) (*NewReleaseResult, error) {
 	out := &NewReleaseResult{NextOffset: d.NextOffset, SessionID: d.SessionID.String()}
 	out.Date, out.Dates, out.HasMore, out.Items = d.Calendar.Default, d.Calendar.Dates, d.HasMore, []model.NewRelease{}
 	for _, it := range d.Items {
-		r := model.NewRelease{Online: it.Online, Categories: it.Categories, Note: it.SubInfo}
+		r := model.NewRelease{Online: it.Online, Categories: it.Categories, Note: it.SubInfo, Platform: -1}
 		when := int64(it.Schedule)
 		if when == 0 {
 			when = int64(it.Planned)
@@ -1621,6 +1803,7 @@ func ParseNewReleases(raw []byte) (*NewReleaseResult, error) {
 		if it.Row != nil {
 			r.SeriesID, r.Title, r.Description = it.Row.ID.String(), it.Row.Title, it.Row.Desc
 			r.CoverURL, r.EpisodeCount = it.Row.Cover, int(it.Row.Count)
+			r.Platform, r.ContentType, r.BookExist = it.Row.Platform, it.Row.ContentType, it.Row.BookExist
 		} else {
 			r.SeriesID, r.Title, r.Description, r.CoverURL = it.ItemID.String(), it.Name, it.Desc, it.Cover
 		}
@@ -1756,6 +1939,138 @@ func ParseUserWorks(raw []byte) (*WorksResult, error) {
 	return out, nil
 }
 
+// CommentListResult is one window of the comment/list stream plus the
+// paging state for the next window.
+type CommentListResult struct {
+	Items         []model.CommentItem
+	Cursor        string
+	NextStartMs   int64
+	HasMore       bool
+	ReportedCount int
+}
+
+// ParseCommentList reads one window of the commentapi comment/list stream.
+// startOffsetMs is the window start the request used; NextStartMs follows
+// the service's next_query_danmaku_list_time and falls back to the next
+// 30-second window, matching the observed paging behaviour.
+func ParseCommentList(raw []byte, startOffsetMs int64) (*CommentListResult, error) {
+	var env struct {
+		Code flexString `json:"code"`
+		Data struct {
+			List []struct {
+				Comment struct {
+					Common struct {
+						Content struct {
+							Text string `json:"text"`
+						} `json:"content"`
+						UserInfo struct {
+							UserID flexString `json:"user_id"`
+						} `json:"user_info"`
+					} `json:"common"`
+					Expand struct {
+						OffsetTime flexInt64 `json:"offset_time"`
+					} `json:"expand"`
+					Stat struct {
+						DiggCount flexInt64 `json:"digg_count"`
+					} `json:"stat"`
+				} `json:"comment"`
+			} `json:"data_list"`
+			Info struct {
+				Cursor  string `json:"cursor"`
+				HasMore bool   `json:"has_more"`
+			} `json:"common_list_info"`
+			Extra struct {
+				Next flexInt64 `json:"next_query_danmaku_list_time"`
+			} `json:"extra"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(raw, &env); err != nil {
+		return nil, err
+	}
+	if env.Code.String() != "" && env.Code.String() != "0" {
+		return nil, fmt.Errorf("comment list code %s", env.Code.String())
+	}
+	out := &CommentListResult{
+		Items:         []model.CommentItem{},
+		Cursor:        env.Data.Info.Cursor,
+		HasMore:       env.Data.Info.HasMore,
+		ReportedCount: danmakuCount(env.Data.Info.Cursor),
+	}
+	for _, row := range env.Data.List {
+		c := row.Comment
+		if c.Common.Content.Text == "" {
+			continue
+		}
+		out.Items = append(out.Items, model.CommentItem{
+			Text:      c.Common.Content.Text,
+			UserID:    c.Common.UserInfo.UserID.String(),
+			DiggCount: int64(c.Stat.DiggCount),
+			OffsetMs:  int64(c.Expand.OffsetTime),
+		})
+	}
+	out.NextStartMs = int64(env.Data.Extra.Next)
+	if out.NextStartMs <= startOffsetMs {
+		out.NextStartMs = startOffsetMs + 30000
+	}
+	return out, nil
+}
+
+// danmakuCount reads the service-reported danmaku_count carried inside the
+// comment/list cursor. The cursor is an opaque string; observed values are
+// JSON (possibly base64-wrapped). It returns 0 when the count is absent.
+func danmakuCount(cursor string) int {
+	for _, s := range []string{cursor, decodeBase64Loose(cursor)} {
+		if s == "" {
+			continue
+		}
+		var v any
+		if err := json.Unmarshal([]byte(s), &v); err != nil {
+			continue
+		}
+		if n, ok := findCount(v, "danmaku_count"); ok {
+			return n
+		}
+	}
+	return 0
+}
+
+func decodeBase64Loose(s string) string {
+	for _, enc := range []*base64.Encoding{base64.StdEncoding, base64.URLEncoding, base64.RawStdEncoding, base64.RawURLEncoding} {
+		if b, err := enc.DecodeString(s); err == nil {
+			return string(b)
+		}
+	}
+	return ""
+}
+
+func findCount(v any, key string) (int, bool) {
+	switch t := v.(type) {
+	case map[string]any:
+		for k, val := range t {
+			if k == key {
+				if f, ok := val.(float64); ok {
+					return int(f), true
+				}
+				if s, ok := val.(string); ok {
+					if n, err := strconv.Atoi(s); err == nil {
+						return n, true
+					}
+				}
+			}
+			if n, ok := findCount(val, key); ok {
+				return n, true
+			}
+		}
+	case []any:
+		for _, e := range t {
+			if n, ok := findCount(e, key); ok {
+				return n, true
+			}
+		}
+	}
+	return 0, false
+}
+
 // PlanCell is one cell of a plan feed.
 type PlanCell struct {
 	ShowType  int
@@ -1786,8 +2101,10 @@ func decodeSeriesList(raw json.RawMessage) []model.SeriesSummary {
 	if err := json.Unmarshal(b, &rows); err != nil {
 		return nil
 	}
+	var rich []catalogVideo
+	_ = json.Unmarshal(b, &rich)
 	out := make([]model.SeriesSummary, 0, len(rows))
-	for _, r := range rows {
+	for i, r := range rows {
 		id := r.ID.String()
 		if id == "" {
 			id = r.Numeric.String()
@@ -1800,10 +2117,14 @@ func decodeSeriesList(raw json.RawMessage) []model.SeriesSummary {
 			continue
 		}
 		cover := firstNonEmpty(r.Cover, r.RawCvr)
-		out = append(out, model.SeriesSummary{
+		sum := model.SeriesSummary{
 			ID: id, Title: title, Description: oneLineText(r.Intro),
 			CoverURL: cover, CoverExpiresAt: URLLifetime(cover), EpisodeCount: r.Count,
-		})
+		}
+		if i < len(rich) {
+			enrichSummary(&sum, rich[i])
+		}
+		out = append(out, sum)
 	}
 	return out
 }
@@ -1919,6 +2240,13 @@ func ParseShortRank(raw []byte) (*ShortRankResult, error) {
 						RecText  struct {
 							Text string `json:"RecommendText"`
 						} `json:"rec_text_item"`
+						Desc              string         `json:"video_desc"`
+						Score             flexScore      `json:"score"`
+						SubTitleList      []subTitleItem `json:"sub_title_list"`
+						SecondaryInfoList []subTitleItem `json:"secondary_info_list"`
+						TagInfo           struct {
+							Text string `json:"text"`
+						} `json:"tag_info"`
 					} `json:"video_data"`
 					Users []struct {
 						Info struct {
@@ -1971,11 +2299,36 @@ func ParseShortRank(raw []byte) (*ShortRankResult, error) {
 			if id == "" || title == "" {
 				continue
 			}
-			out.Items = append(out.Items, model.RankItem{
+			rankItem := model.RankItem{
 				Position: len(out.Items) + 1, Rank: recommendRank(v.Rec), SeriesID: id, Title: title,
 				CoverURL: v.Cover, Score: v.RecText.Text, EpisodeCount: int(v.Count),
-				Promoted: v.RecText.Text == promotedText,
-			})
+				Promoted:    v.RecText.Text == promotedText,
+				Description: strings.TrimSpace(v.Desc), TagText: strings.TrimSpace(v.TagInfo.Text),
+			}
+			if v.Score > 0 {
+				rankItem.Rating = strconv.FormatFloat(float64(v.Score), 'f', -1, 64)
+			}
+			rankActors := make([]string, 0, 2)
+			for _, it := range v.SubTitleList {
+				switch it.DataType {
+				case 3:
+					if rankItem.Category == "" {
+						rankItem.Category = it.Content
+					}
+				case 23:
+					if it.Content != "" {
+						rankActors = append(rankActors, it.Content)
+					}
+				}
+			}
+			rankItem.Actors = strings.Join(rankActors, " / ")
+			for _, it := range v.SecondaryInfoList {
+				if it.DataType == 1 && it.Content != "" {
+					rankItem.HeatText = it.Content
+					break
+				}
+			}
+			out.Items = append(out.Items, rankItem)
 		}
 		// The actor ranking (ShortRankActors) lists people instead.
 		for _, u := range cell.Users {
@@ -2013,14 +2366,19 @@ func ParseCategoryLanding(raw []byte) (*model.CategoryPage, error) {
 			HasMore bool            `json:"has_more"`
 			Rule    json.RawMessage `json:"rule"`
 			Books   []struct {
-				ID       flexString `json:"book_id"`
-				Title    string     `json:"book_name"`
-				Author   string     `json:"author"`
-				Abstract string     `json:"abstract"`
-				Cover    string     `json:"thumb_url"`
-				Category string     `json:"category"`
-				Words    flexInt64  `json:"word_number"`
-				Score    flexString `json:"score"`
+				ID         flexString   `json:"book_id"`
+				Title      string       `json:"book_name"`
+				Author     string       `json:"author"`
+				Abstract   string       `json:"abstract"`
+				Cover      string       `json:"thumb_url"`
+				Category   string       `json:"category"`
+				Words      flexInt64    `json:"word_number"`
+				Score      flexString   `json:"score"`
+				Chapters   flexInt64    `json:"chapter_number"`
+				TotalPrice flexInt64    `json:"total_price"`
+				// related_audio_bookids 是一个字符串，形如
+				// "[6959807164047166471,7647444871128566846]"，不是 JSON 数组。
+				AudioIDs string `json:"related_audio_bookids"`
 			} `json:"book_info"`
 			Category struct {
 				ID    flexInt `json:"id"`
@@ -2072,14 +2430,152 @@ func ParseCategoryLanding(raw []byte) (*model.CategoryPage, error) {
 		if id == "" || strings.TrimSpace(b.Title) == "" {
 			continue
 		}
+		var audioIDs []string
+		for _, a := range strings.Split(strings.Trim(b.AudioIDs, "[]"), ",") {
+			if s := strings.TrimSpace(a); s != "" {
+				audioIDs = append(audioIDs, s)
+			}
+		}
 		items = append(items, model.SeriesSummary{
 			ID: id, Title: b.Title, Description: oneLineText(b.Abstract),
 			CoverURL: b.Cover, CoverExpiresAt: URLLifetime(b.Cover),
 			Author: b.Author, Category: b.Category, Words: int64(b.Words),
+			Rating:       strings.TrimSpace(b.Score.String()),
+			EpisodeCount: int(b.Chapters), TotalPrice: int64(b.TotalPrice),
+			AudioBookIDs: audioIDs,
 		})
 	}
 	out.Items = items
 	return out, nil
+}
+
+// ErrEmptyModel marks a response that carried no media model at all
+// (the anonymous-empty shape); the sdk layer maps it to its own
+// ErrAnonymousLimited so device rotation can kick in.
+var ErrEmptyModel = errors.New("protocol: response has no media model")
+
+// ParseRegisterKey reads a registerkey response and returns the wrapped
+// content key (data.key).
+func ParseRegisterKey(raw []byte) (string, error) {
+	var env struct {
+		Code    flexString `json:"code"`
+		Message string     `json:"message"`
+		Data    struct {
+			Key string `json:"key"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(raw, &env); err != nil {
+		return "", err
+	}
+	if env.Code.String() != "" && env.Code.String() != "0" {
+		return "", fmt.Errorf("registerkey code %s: %s", env.Code.String(), env.Message)
+	}
+	if env.Data.Key == "" {
+		return "", fmt.Errorf("%w: registerkey returned no key", ErrEmptyModel)
+	}
+	return env.Data.Key, nil
+}
+
+// ParseAudioPlayInfo reads an audio/playinfo response into a media model.
+// The response is not the standard playback envelope: data is an ARRAY of
+// per-chapter entries whose video_model string is the same TTVideoEngine
+// model ParsePlayback consumes, so the matching entry's model is wrapped
+// in a synthetic envelope and handed to ParsePlayback.
+func ParseAudioPlayInfo(raw []byte, itemID string) (*model.Playback, error) {
+	var env struct {
+		Code    flexString `json:"code"`
+		Message string     `json:"message"`
+		Data    []struct {
+			ItemID     flexString `json:"item_id"`
+			VideoModel string     `json:"video_model"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(raw, &env); err != nil {
+		return nil, err
+	}
+	if env.Code.String() != "" && env.Code.String() != "0" {
+		return nil, fmt.Errorf("audio playinfo code %s", env.Code.String())
+	}
+	var modelStr string
+	for _, e := range env.Data {
+		if e.ItemID.String() == itemID && e.VideoModel != "" {
+			modelStr = e.VideoModel
+			break
+		}
+		if modelStr == "" && e.VideoModel != "" {
+			modelStr = e.VideoModel
+		}
+	}
+	if modelStr == "" {
+		return nil, fmt.Errorf("%w for item %s", ErrEmptyModel, itemID)
+	}
+	wrapped, err := json.Marshal(map[string]any{
+		"code":    0,
+		"message": "SUCCESS",
+		"data":    map[string]any{"video_model": modelStr},
+	})
+	if err != nil {
+		return nil, err
+	}
+	return ParsePlayback(wrapped, itemID)
+}
+
+// ReaderFull is the parsed shape of one /reading/reader/full/v response
+// before decryption. Content holds the wrapped ciphertext; when the
+// identity has not registered a content key (or the chapter is not
+// unlocked for it) Content is the literal string "Invalid".
+type ReaderFull struct {
+	Title       string
+	Content     string
+	CryptStatus int
+}
+
+// ParseReaderFull reads a reader/full response envelope.
+func ParseReaderFull(raw []byte) (*ReaderFull, error) {
+	var env struct {
+		Code    flexString `json:"code"`
+		Message string     `json:"message"`
+		Data    struct {
+			Title       string `json:"title"`
+			Content     string `json:"content"`
+			CryptStatus int    `json:"crypt_status"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(raw, &env); err != nil {
+		return nil, err
+	}
+	if env.Code.String() != "" && env.Code.String() != "0" {
+		return nil, fmt.Errorf("reader full code %s: %s", env.Code.String(), env.Message)
+	}
+	return &ReaderFull{Title: env.Data.Title, Content: env.Data.Content, CryptStatus: env.Data.CryptStatus}, nil
+}
+
+// ParseToneInfo reads an audio/toneinfo response: whether the book has
+// playable tones at all, and the related novel's book id when the book
+// itself is an audiobook.
+func ParseToneInfo(raw []byte) (*model.ToneInfo, error) {
+	var env struct {
+		Code flexString `json:"code"`
+		Data struct {
+			RelateNovelID flexString      `json:"relate_novel_bookid"`
+			Tones         json.RawMessage `json:"tones"`
+			TTSTones      json.RawMessage `json:"tts_tones"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(raw, &env); err != nil {
+		return nil, err
+	}
+	if env.Code.String() != "" && env.Code.String() != "0" {
+		return nil, fmt.Errorf("tone info code %s", env.Code.String())
+	}
+	has := func(r json.RawMessage) bool {
+		t := bytes.TrimSpace(r)
+		return len(t) > 2 && string(t) != "null" && string(t) != "[]"
+	}
+	return &model.ToneInfo{
+		RelateNovelID: env.Data.RelateNovelID.String(),
+		HasTones:      has(env.Data.Tones) || has(env.Data.TTSTones),
+	}, nil
 }
 
 // oneLineText keeps the first sentence of a long abstract.

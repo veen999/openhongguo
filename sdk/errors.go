@@ -32,6 +32,10 @@ var (
 	ErrTransport = errors.New("openhongguo: transport failure")
 	// ErrSignatureRejected 表示服务端拒绝了请求的签名。
 	ErrSignatureRejected = errors.New("openhongguo: signature rejected")
+	// ErrContentLocked 表示章节正文对当前身份未解锁：内容键未注册成功，
+	// 或该章节属于付费/VIP 内容，匿名身份读不到。调用方应降级为「需付费」提示，
+	// 不要当作通道故障重试。
+	ErrContentLocked = errors.New("openhongguo: chapter content is locked")
 	// ErrContentUnavailable 表示内容已下架、不存在，或当前调用方无权访问。
 	// 服务端的错误码有 101001、101104、101109、101115 等。
 	ErrContentUnavailable = errors.New("openhongguo: content unavailable")

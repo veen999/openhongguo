@@ -155,6 +155,20 @@ var methods = map[string]method{
 		}
 		return c.PersonWorks(ctx, id, cursor)
 	},
+	"commentList": func(ctx context.Context, c *sdk.Client, a []json.RawMessage) (any, error) {
+		var episodeID, seriesID string
+		var o sdk.CommentOptions
+		if err := arg(a, 0, &episodeID); err != nil {
+			return nil, err
+		}
+		if err := arg(a, 1, &seriesID); err != nil {
+			return nil, err
+		}
+		if err := arg(a, 2, &o); err != nil {
+			return nil, err
+		}
+		return c.CommentList(ctx, episodeID, seriesID, o)
+	},
 	"categories": oneString(func(ctx context.Context, c *sdk.Client, id string) (any, error) { return c.Categories(ctx, id) }),
 	"categoryLanding": func(ctx context.Context, c *sdk.Client, a []json.RawMessage) (any, error) {
 		var id string
@@ -178,6 +192,47 @@ var methods = map[string]method{
 		}
 		return playbackResult{Playback: pb}, nil
 	}),
+	"audioPlayback": func(ctx context.Context, c *sdk.Client, a []json.RawMessage) (any, error) {
+		var bookID, itemID string
+		var toneID int
+		if err := arg(a, 0, &bookID); err != nil {
+			return nil, err
+		}
+		if err := arg(a, 1, &itemID); err != nil {
+			return nil, err
+		}
+		if len(a) > 2 {
+			if err := arg(a, 2, &toneID); err != nil {
+				return nil, err
+			}
+		}
+		pb, err := c.AudioPlayback(ctx, bookID, itemID, toneID)
+		if errors.Is(err, sdk.ErrDRMProtected) && pb != nil {
+			key, kerr := sdk.ContentKey(pb)
+			if kerr != nil {
+				return playbackResult{Playback: pb, ContentKeyError: Error(kerr)}, nil
+			}
+			return playbackResult{Playback: pb, ContentKey: &key}, nil
+		}
+		if err != nil {
+			return nil, err
+		}
+		return playbackResult{Playback: pb}, nil
+	},
+	"toneInfo": func(ctx context.Context, c *sdk.Client, a []json.RawMessage) (any, error) {
+		var bookID string
+		if err := arg(a, 0, &bookID); err != nil {
+			return nil, err
+		}
+		return c.ToneInfo(ctx, bookID)
+	},
+	"chapterContent": func(ctx context.Context, c *sdk.Client, a []json.RawMessage) (any, error) {
+		var bookID, itemID string
+		if err := args2(a, &bookID, &itemID); err != nil {
+			return nil, err
+		}
+		return c.ChapterContent(ctx, bookID, itemID)
+	},
 	"resetDevice": func(ctx context.Context, c *sdk.Client, _ []json.RawMessage) (any, error) {
 		return nil, c.ResetDevice(ctx)
 	},
@@ -264,6 +319,7 @@ var ErrorCodes = []ErrorCode{
 	{sdk.ErrTransport, "TRANSPORT"},
 	{sdk.ErrSignatureRejected, "SIGNATURE_REJECTED"},
 	{sdk.ErrContentUnavailable, "CONTENT_UNAVAILABLE"},
+	{sdk.ErrContentLocked, "CONTENT_LOCKED"},
 	{sdk.ErrParamInvalid, "PARAM_INVALID"},
 	{sdk.ErrChallengeRequired, "CHALLENGE_REQUIRED"},
 	{sdk.ErrDeviceRejected, "DEVICE_REJECTED"},

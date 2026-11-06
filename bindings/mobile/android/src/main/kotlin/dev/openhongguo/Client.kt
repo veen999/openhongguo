@@ -180,6 +180,10 @@ class OpenhongguoClient internal constructor(private val engine: Engine) {
     suspend fun personWorks(userId: String, cursor: String = ""): WorkPage =
         WorkPage.fromJson(call("personWorks", userId, cursor).asObject())
 
+    /** 一集的评论与弹幕，一个时间窗口；翻页把上一窗的 nextStartMs 和 cursor 填回 options。 */
+    suspend fun commentList(episodeId: String, seriesId: String, options: CommentOptions = CommentOptions()): CommentPage =
+        CommentPage.fromJson(call("commentList", episodeId, seriesId, options.toJson()).asObject())
+
     /** 书籍分类的标签页。 */
     suspend fun categories(categoryId: String): CategoryPage =
         CategoryPage.fromJson(call("categories", categoryId).asObject())
@@ -197,6 +201,24 @@ class OpenhongguoClient internal constructor(private val engine: Engine) {
             contentKeyError = (o.opt("contentKeyError") as? JSONObject)?.let(OpenhongguoException::fromJson),
         )
     }
+
+    /** 一章有声书的播放模型；加密章节同时给出内容密钥。按章单独取模，不要批量。 */
+    suspend fun audioPlayback(bookId: String, itemId: String, toneId: Int = 0): PlaybackResult {
+        val o = call("audioPlayback", bookId, itemId, toneId).asObject()
+        return PlaybackResult(
+            playback = Playback.fromJson(o.opt("playback").asObject()),
+            contentKey = (o.opt("contentKey") as? JSONObject)?.let(ContentKey::fromJson),
+            contentKeyError = (o.opt("contentKeyError") as? JSONObject)?.let(OpenhongguoException::fromJson),
+        )
+    }
+
+    /** 一本书的音色信息：是否有可播音色，本书若是有声书则给出对应的小说 id。 */
+    suspend fun toneInfo(bookId: String): ToneInfo =
+        ToneInfo.fromJson(call("toneInfo", bookId).asObject())
+
+    /** 一章小说正文（已解密）；付费或未解锁章节抛 CONTENT_LOCKED。 */
+    suspend fun chapterContent(bookId: String, itemId: String): ChapterContent =
+        ChapterContent.fromJson(call("chapterContent", bookId, itemId).asObject())
 
     /** 丢弃当前匿名设备，下次请求时重新注册。 */
     suspend fun resetDevice() {

@@ -97,6 +97,105 @@ public struct CategoryPage: Codable, Hashable, Sendable {
     }
 }
 
+/// ChapterContent 是一章小说的正文，已经解密并解压。
+/// HTML 是服务端给的章节 HTML（<article> 包裹，段落是 <blk> 元素），
+/// Paragraphs 是从中按顺序抽出的纯文本段落，供不想解析 HTML 的调用方直接排版。
+public struct ChapterContent: Codable, Hashable, Sendable {
+    public var title: String
+    public var html: String
+    public var paragraphs: [String]
+
+    public init(title: String = "", html: String = "", paragraphs: [String] = []) {
+        self.title = title
+        self.html = html
+        self.paragraphs = paragraphs
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case title
+        case html
+        case paragraphs
+    }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        self.title = try c.decodeIfPresent(String.self, forKey: .title) ?? ""
+        self.html = try c.decodeIfPresent(String.self, forKey: .html) ?? ""
+        self.paragraphs = try c.decodeIfPresent([String].self, forKey: .paragraphs) ?? []
+    }
+}
+
+/// CommentItem 是评论/弹幕一体流（comment_type 20）里的一条。
+/// Text 是正文，OffsetMs 是它在分集时间轴上的毫秒位置（弹幕形态），
+/// DiggCount 是点赞数（评论形态按它降序排列）。上游不下发昵称和头像，
+/// 只有 UserID；显示名由调用方按需生成（例如「剧友」加 UserID 后 4 位）。
+public struct CommentItem: Codable, Hashable, Sendable {
+    public var text: String
+    public var userId: String
+    public var diggCount: Int
+    public var offsetMs: Int
+
+    public init(text: String = "", userId: String = "", diggCount: Int = 0, offsetMs: Int = 0) {
+        self.text = text
+        self.userId = userId
+        self.diggCount = diggCount
+        self.offsetMs = offsetMs
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case text
+        case userId = "user_id"
+        case diggCount = "digg_count"
+        case offsetMs = "offset_ms"
+    }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        self.text = try c.decodeIfPresent(String.self, forKey: .text) ?? ""
+        self.userId = try c.decodeIfPresent(String.self, forKey: .userId) ?? ""
+        self.diggCount = try c.decodeIfPresent(Int.self, forKey: .diggCount) ?? 0
+        self.offsetMs = try c.decodeIfPresent(Int.self, forKey: .offsetMs) ?? 0
+    }
+}
+
+/// CommentPage 是 comment/list 的一个时间窗口。Cursor 是服务端给出的
+/// 同窗口续页游标；NextStartMs 是下一窗口的起始毫秒，调用方把它和
+/// Cursor 一起传回 CommentOptions 即可继续翻页。ReportedCount 是
+/// 服务端在游标里自报的弹幕总数，匿名身份实际下发的条数可能少于它；
+/// 游标里没有这个数时为 0。
+public struct CommentPage: Codable, Hashable, Sendable {
+    public var items: [CommentItem]
+    public var cursor: String
+    public var nextStartMs: Int
+    public var hasMore: Bool
+    public var reportedCount: Int
+
+    public init(items: [CommentItem] = [], cursor: String = "", nextStartMs: Int = 0, hasMore: Bool = false, reportedCount: Int = 0) {
+        self.items = items
+        self.cursor = cursor
+        self.nextStartMs = nextStartMs
+        self.hasMore = hasMore
+        self.reportedCount = reportedCount
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case items
+        case cursor
+        case nextStartMs = "next_start_ms"
+        case hasMore = "has_more"
+        case reportedCount = "reported_count"
+    }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        self.items = try c.decodeIfPresent([CommentItem].self, forKey: .items) ?? []
+        self.cursor = try c.decodeIfPresent(String.self, forKey: .cursor) ?? ""
+        self.nextStartMs = try c.decodeIfPresent(Int.self, forKey: .nextStartMs) ?? 0
+        self.hasMore = try c.decodeIfPresent(Bool.self, forKey: .hasMore) ?? false
+        self.reportedCount = try c.decodeIfPresent(Int.self, forKey: .reportedCount) ?? 0
+    }
+}
+
 /// ContentKey 是受保护播放模型的 CENC（cenc-aes-ctr）内容密钥，
 /// 由 sdk.ContentKey 还原。
 public struct ContentKey: Codable, Hashable, Sendable {
@@ -574,8 +673,15 @@ public struct NewRelease: Codable, Hashable, Sendable {
     /// Note 是预告文案（"预计10月26日上线"）。
     public var heat: String
     public var note: String
+    /// Platform 是上游 video_platform：0=小说/有声书，1/2/3/4/5/1024=视频；
+    /// 只有带 subscribe_data 的条目才有值，无该行时为 -1（未知）。
+    public var platform: Int
+    /// ContentType 是上游 content_type：1=真人短剧，1004=漫剧。
+    public var contentType: Int
+    /// BookExist 表示该条目同时存在书籍形态（多为有声书/小说信号）。
+    public var bookExist: Bool
 
-    public init(seriesId: String = "", title: String = "", description: String = "", coverUrl: String = "", coverExpiresAt: String = "", episodeCount: Int = 0, online: Bool = false, publishAt: String = "", categories: [String] = [], heat: String = "", note: String = "") {
+    public init(seriesId: String = "", title: String = "", description: String = "", coverUrl: String = "", coverExpiresAt: String = "", episodeCount: Int = 0, online: Bool = false, publishAt: String = "", categories: [String] = [], heat: String = "", note: String = "", platform: Int = 0, contentType: Int = 0, bookExist: Bool = false) {
         self.seriesId = seriesId
         self.title = title
         self.description = description
@@ -587,6 +693,9 @@ public struct NewRelease: Codable, Hashable, Sendable {
         self.categories = categories
         self.heat = heat
         self.note = note
+        self.platform = platform
+        self.contentType = contentType
+        self.bookExist = bookExist
     }
 
     enum CodingKeys: String, CodingKey {
@@ -601,6 +710,9 @@ public struct NewRelease: Codable, Hashable, Sendable {
         case categories
         case heat
         case note
+        case platform
+        case contentType = "content_type"
+        case bookExist = "book_exist"
     }
 
     public init(from decoder: Decoder) throws {
@@ -616,6 +728,9 @@ public struct NewRelease: Codable, Hashable, Sendable {
         self.categories = try c.decodeIfPresent([String].self, forKey: .categories) ?? []
         self.heat = try c.decodeIfPresent(String.self, forKey: .heat) ?? ""
         self.note = try c.decodeIfPresent(String.self, forKey: .note) ?? ""
+        self.platform = try c.decodeIfPresent(Int.self, forKey: .platform) ?? 0
+        self.contentType = try c.decodeIfPresent(Int.self, forKey: .contentType) ?? 0
+        self.bookExist = try c.decodeIfPresent(Bool.self, forKey: .bookExist) ?? false
     }
 }
 
@@ -997,8 +1112,20 @@ public struct RankItem: Codable, Hashable, Sendable {
     public var details: [String]
     /// Change 是该行相对上一期榜单的变动（如果有）。
     public var change: RankChange?
+    /// Description 是简介（video_desc），短剧榜单行可用时填充。
+    public var description: String
+    /// Rating 是评分原文（如 "8.4"），来自 video_data.score。
+    public var rating: String
+    /// HeatText 是热度文案（如 "4386万热度"），来自 secondary_info_list。
+    public var heatText: String
+    /// Category 是主分类名（如 "剧情"），来自 sub_title_list 中 data_type=3 的项。
+    public var category: String
+    /// Actors 是主演名（sub_title_list 中 data_type=23 的项，多个以 " / " 连接）。
+    public var actors: String
+    /// TagText 是角标文案（如 "新剧"），来自 tag_info.text。
+    public var tagText: String
 
-    public init(rank: Int = 0, votes: Int = 0, kind: Int = 0, actor: String = "", seriesId: String = "", title: String = "", coverUrl: String = "", score: String = "", episodeCount: Int = 0, position: Int = 0, promoted: Bool = false, actorId: String = "", userId: String = "", avatarUrl: String = "", intro: String = "", details: [String] = [], change: RankChange? = nil) {
+    public init(rank: Int = 0, votes: Int = 0, kind: Int = 0, actor: String = "", seriesId: String = "", title: String = "", coverUrl: String = "", score: String = "", episodeCount: Int = 0, position: Int = 0, promoted: Bool = false, actorId: String = "", userId: String = "", avatarUrl: String = "", intro: String = "", details: [String] = [], change: RankChange? = nil, description: String = "", rating: String = "", heatText: String = "", category: String = "", actors: String = "", tagText: String = "") {
         self.rank = rank
         self.votes = votes
         self.kind = kind
@@ -1016,6 +1143,12 @@ public struct RankItem: Codable, Hashable, Sendable {
         self.intro = intro
         self.details = details
         self.change = change
+        self.description = description
+        self.rating = rating
+        self.heatText = heatText
+        self.category = category
+        self.actors = actors
+        self.tagText = tagText
     }
 
     enum CodingKeys: String, CodingKey {
@@ -1036,6 +1169,12 @@ public struct RankItem: Codable, Hashable, Sendable {
         case intro
         case details
         case change
+        case description
+        case rating
+        case heatText = "heat_text"
+        case category
+        case actors
+        case tagText = "tag_text"
     }
 
     public init(from decoder: Decoder) throws {
@@ -1057,6 +1196,12 @@ public struct RankItem: Codable, Hashable, Sendable {
         self.intro = try c.decodeIfPresent(String.self, forKey: .intro) ?? ""
         self.details = try c.decodeIfPresent([String].self, forKey: .details) ?? []
         self.change = try c.decodeIfPresent(RankChange.self, forKey: .change)
+        self.description = try c.decodeIfPresent(String.self, forKey: .description) ?? ""
+        self.rating = try c.decodeIfPresent(String.self, forKey: .rating) ?? ""
+        self.heatText = try c.decodeIfPresent(String.self, forKey: .heatText) ?? ""
+        self.category = try c.decodeIfPresent(String.self, forKey: .category) ?? ""
+        self.actors = try c.decodeIfPresent(String.self, forKey: .actors) ?? ""
+        self.tagText = try c.decodeIfPresent(String.self, forKey: .tagText) ?? ""
     }
 }
 
@@ -1221,6 +1366,24 @@ public struct Series: Codable, Hashable, Sendable {
     public var author: String
     public var category: String
     public var words: Int
+    /// HeatText 是服务端给的热度文案（如 "5418万热度"），来自推荐理由/次要信息行。
+    public var heatText: String
+    /// Rating 是评分原文（如 "8.4"），只有部分列表面（搜索/榜单）提供。
+    public var rating: String
+    /// Tags 是分类名以 "·" 连接的标签串（如 "剧情·重生·逆袭"）。
+    public var tags: String
+    /// PlayCount 是播放量（series_play_cnt / play_cnt），可用时填充。
+    /// JSON 名用 list_play_count，避免与 Series.PlayCount（play_count）冲突。
+    public var listPlayCount: Int
+    /// PlatformCode 是 video_platform（0=书籍/有声书，其余为视频平台），列表面可用时填充。
+    /// JSON 名用 platform_code，避免与 Series.Platform（同名 platform）冲突。
+    public var platformCode: Int
+    /// TotalPrice 是书籍的整本币价（total_price），>0 表示该书参与金币付费；
+    /// 0 表示免费。只在书籍列表面（分类落地页）填充。
+    public var totalPrice: Int
+    /// AudioBookIDs 是该小说关联的真人有声书 book_id 列表
+    /// （related_audio_bookids），只在书籍列表面填充。
+    public var audioBookIds: [String]
     /// Status 是发布状态；PayType 是付费墙状态。
     public var status: SeriesStatus
     public var payType: PayType
@@ -1255,7 +1418,7 @@ public struct Series: Codable, Hashable, Sendable {
     /// Rows 是详情页的次要信息行（季、分类、演员）。
     public var rows: [InfoRow]
 
-    public init(id: String = "", title: String = "", description: String = "", coverUrl: String = "", coverExpiresAt: String = "", episodeCount: Int = 0, author: String = "", category: String = "", words: Int = 0, status: SeriesStatus = SeriesStatus(rawValue: 0), payType: PayType = PayType(rawValue: 0), contentType: ContentType = ContentType(rawValue: 0), platform: PlatformType = PlatformType(rawValue: 0), heat: Int = 0, playCount: Int = 0, followCount: Int = 0, diggCount: Int = 0, createdAt: String = "", rightText: String = "", subtitles: [String] = [], ageGate: Int = 0, isMultiSeason: Bool = false, seasonIndex: Int = 0, relatedAlbumId: String = "", relatedNovelBookId: String = "", novel: Novel? = nil, rows: [InfoRow] = []) {
+    public init(id: String = "", title: String = "", description: String = "", coverUrl: String = "", coverExpiresAt: String = "", episodeCount: Int = 0, author: String = "", category: String = "", words: Int = 0, heatText: String = "", rating: String = "", tags: String = "", listPlayCount: Int = 0, platformCode: Int = 0, totalPrice: Int = 0, audioBookIds: [String] = [], status: SeriesStatus = SeriesStatus(rawValue: 0), payType: PayType = PayType(rawValue: 0), contentType: ContentType = ContentType(rawValue: 0), platform: PlatformType = PlatformType(rawValue: 0), heat: Int = 0, playCount: Int = 0, followCount: Int = 0, diggCount: Int = 0, createdAt: String = "", rightText: String = "", subtitles: [String] = [], ageGate: Int = 0, isMultiSeason: Bool = false, seasonIndex: Int = 0, relatedAlbumId: String = "", relatedNovelBookId: String = "", novel: Novel? = nil, rows: [InfoRow] = []) {
         self.id = id
         self.title = title
         self.description = description
@@ -1265,6 +1428,13 @@ public struct Series: Codable, Hashable, Sendable {
         self.author = author
         self.category = category
         self.words = words
+        self.heatText = heatText
+        self.rating = rating
+        self.tags = tags
+        self.listPlayCount = listPlayCount
+        self.platformCode = platformCode
+        self.totalPrice = totalPrice
+        self.audioBookIds = audioBookIds
         self.status = status
         self.payType = payType
         self.contentType = contentType
@@ -1295,6 +1465,13 @@ public struct Series: Codable, Hashable, Sendable {
         case author
         case category
         case words
+        case heatText = "heat_text"
+        case rating
+        case tags
+        case listPlayCount = "list_play_count"
+        case platformCode = "platform_code"
+        case totalPrice = "total_price"
+        case audioBookIds = "audio_book_ids"
         case status
         case payType = "pay_type"
         case contentType = "content_type"
@@ -1326,6 +1503,13 @@ public struct Series: Codable, Hashable, Sendable {
         self.author = try c.decodeIfPresent(String.self, forKey: .author) ?? ""
         self.category = try c.decodeIfPresent(String.self, forKey: .category) ?? ""
         self.words = try c.decodeIfPresent(Int.self, forKey: .words) ?? 0
+        self.heatText = try c.decodeIfPresent(String.self, forKey: .heatText) ?? ""
+        self.rating = try c.decodeIfPresent(String.self, forKey: .rating) ?? ""
+        self.tags = try c.decodeIfPresent(String.self, forKey: .tags) ?? ""
+        self.listPlayCount = try c.decodeIfPresent(Int.self, forKey: .listPlayCount) ?? 0
+        self.platformCode = try c.decodeIfPresent(Int.self, forKey: .platformCode) ?? 0
+        self.totalPrice = try c.decodeIfPresent(Int.self, forKey: .totalPrice) ?? 0
+        self.audioBookIds = try c.decodeIfPresent([String].self, forKey: .audioBookIds) ?? []
         self.status = try c.decodeIfPresent(SeriesStatus.self, forKey: .status) ?? SeriesStatus(rawValue: 0)
         self.payType = try c.decodeIfPresent(PayType.self, forKey: .payType) ?? PayType(rawValue: 0)
         self.contentType = try c.decodeIfPresent(ContentType.self, forKey: .contentType) ?? ContentType(rawValue: 0)
@@ -1405,8 +1589,26 @@ public struct SeriesSummary: Codable, Hashable, Sendable {
     public var author: String
     public var category: String
     public var words: Int
+    /// HeatText 是服务端给的热度文案（如 "5418万热度"），来自推荐理由/次要信息行。
+    public var heatText: String
+    /// Rating 是评分原文（如 "8.4"），只有部分列表面（搜索/榜单）提供。
+    public var rating: String
+    /// Tags 是分类名以 "·" 连接的标签串（如 "剧情·重生·逆袭"）。
+    public var tags: String
+    /// PlayCount 是播放量（series_play_cnt / play_cnt），可用时填充。
+    /// JSON 名用 list_play_count，避免与 Series.PlayCount（play_count）冲突。
+    public var listPlayCount: Int
+    /// PlatformCode 是 video_platform（0=书籍/有声书，其余为视频平台），列表面可用时填充。
+    /// JSON 名用 platform_code，避免与 Series.Platform（同名 platform）冲突。
+    public var platformCode: Int
+    /// TotalPrice 是书籍的整本币价（total_price），>0 表示该书参与金币付费；
+    /// 0 表示免费。只在书籍列表面（分类落地页）填充。
+    public var totalPrice: Int
+    /// AudioBookIDs 是该小说关联的真人有声书 book_id 列表
+    /// （related_audio_bookids），只在书籍列表面填充。
+    public var audioBookIds: [String]
 
-    public init(id: String = "", title: String = "", description: String = "", coverUrl: String = "", coverExpiresAt: String = "", episodeCount: Int = 0, author: String = "", category: String = "", words: Int = 0) {
+    public init(id: String = "", title: String = "", description: String = "", coverUrl: String = "", coverExpiresAt: String = "", episodeCount: Int = 0, author: String = "", category: String = "", words: Int = 0, heatText: String = "", rating: String = "", tags: String = "", listPlayCount: Int = 0, platformCode: Int = 0, totalPrice: Int = 0, audioBookIds: [String] = []) {
         self.id = id
         self.title = title
         self.description = description
@@ -1416,6 +1618,13 @@ public struct SeriesSummary: Codable, Hashable, Sendable {
         self.author = author
         self.category = category
         self.words = words
+        self.heatText = heatText
+        self.rating = rating
+        self.tags = tags
+        self.listPlayCount = listPlayCount
+        self.platformCode = platformCode
+        self.totalPrice = totalPrice
+        self.audioBookIds = audioBookIds
     }
 
     enum CodingKeys: String, CodingKey {
@@ -1428,6 +1637,13 @@ public struct SeriesSummary: Codable, Hashable, Sendable {
         case author
         case category
         case words
+        case heatText = "heat_text"
+        case rating
+        case tags
+        case listPlayCount = "list_play_count"
+        case platformCode = "platform_code"
+        case totalPrice = "total_price"
+        case audioBookIds = "audio_book_ids"
     }
 
     public init(from decoder: Decoder) throws {
@@ -1441,6 +1657,13 @@ public struct SeriesSummary: Codable, Hashable, Sendable {
         self.author = try c.decodeIfPresent(String.self, forKey: .author) ?? ""
         self.category = try c.decodeIfPresent(String.self, forKey: .category) ?? ""
         self.words = try c.decodeIfPresent(Int.self, forKey: .words) ?? 0
+        self.heatText = try c.decodeIfPresent(String.self, forKey: .heatText) ?? ""
+        self.rating = try c.decodeIfPresent(String.self, forKey: .rating) ?? ""
+        self.tags = try c.decodeIfPresent(String.self, forKey: .tags) ?? ""
+        self.listPlayCount = try c.decodeIfPresent(Int.self, forKey: .listPlayCount) ?? 0
+        self.platformCode = try c.decodeIfPresent(Int.self, forKey: .platformCode) ?? 0
+        self.totalPrice = try c.decodeIfPresent(Int.self, forKey: .totalPrice) ?? 0
+        self.audioBookIds = try c.decodeIfPresent([String].self, forKey: .audioBookIds) ?? []
     }
 }
 
@@ -1615,6 +1838,29 @@ public struct Suggestion: Codable, Hashable, Sendable {
         self.text = try c.decodeIfPresent(String.self, forKey: .text) ?? ""
         self.keyword = try c.decodeIfPresent(String.self, forKey: .keyword) ?? ""
         self.kind = try c.decodeIfPresent(Int.self, forKey: .kind) ?? 0
+    }
+}
+
+/// ToneInfo 是有声书的音色信息：这本书是否有可播的音色，
+/// 以及（当本书本身是有声书时）它对应的小说 book_id。
+public struct ToneInfo: Codable, Hashable, Sendable {
+    public var relateNovelId: String
+    public var hasTones: Bool
+
+    public init(relateNovelId: String = "", hasTones: Bool = false) {
+        self.relateNovelId = relateNovelId
+        self.hasTones = hasTones
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case relateNovelId = "relate_novel_id"
+        case hasTones = "has_tones"
+    }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        self.relateNovelId = try c.decodeIfPresent(String.self, forKey: .relateNovelId) ?? ""
+        self.hasTones = try c.decodeIfPresent(Bool.self, forKey: .hasTones) ?? false
     }
 }
 
@@ -1794,5 +2040,20 @@ public struct ShortRankQuery: Encodable, Hashable, Sendable {
         self.content = content
         self.board = board
         self.cursor = cursor
+    }
+}
+
+/// CommentOptions 选择 comment/list 的一个时间窗口。StartOffsetMs 是窗口
+/// 在分集时间轴上的起始毫秒（首窗为 0，之后用上一窗的 NextStartMs）；
+/// Cursor 是上一窗给出的游标（首窗为空）；DurationMs 是分集总时长毫秒。
+public struct CommentOptions: Encodable, Hashable, Sendable {
+    public var startOffsetMs: Int?
+    public var cursor: String?
+    public var durationMs: Int?
+
+    public init(startOffsetMs: Int? = nil, cursor: String? = nil, durationMs: Int? = nil) {
+        self.startOffsetMs = startOffsetMs
+        self.cursor = cursor
+        self.durationMs = durationMs
     }
 }

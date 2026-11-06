@@ -197,6 +197,51 @@ func DeviceQueryPairs(id SearchIdentity) [][2]string {
 	}
 }
 
+// SignedVideoTabPairs is the ordered video_tab model query: the common
+// device pairs plus the episode id and the all-definitions flag. Without
+// need_all_video_definition the tab channel returns only a single 720p
+// stream (observed 2026-11-06); with it, every tier comes back.
+func SignedVideoTabPairs(id SearchIdentity, videoID string) [][2]string {
+	pairs := DeviceQueryPairs(id)
+	pairs = append(pairs,
+		[2]string{"video_id", videoID},
+		[2]string{"need_all_video_definition", "true"},
+	)
+	return pairs
+}
+
+// SignedAudioPlayInfoPairs is the ordered audiobook playinfo query.
+// item_ids carries ONE chapter id: multi-chapter calls come back with
+// mislabeled item ids (observed 2026-11-06), so callers go per chapter.
+func SignedAudioPlayInfoPairs(id SearchIdentity, bookID, itemID string, toneID int) [][2]string {
+	pairs := DeviceQueryPairs(id)
+	pairs = append(pairs,
+		[2]string{"book_id", bookID},
+		[2]string{"item_ids", itemID},
+		[2]string{"tone_id", strconv.Itoa(toneID)},
+		[2]string{"req_type", "0"},
+	)
+	return pairs
+}
+
+// SignedReaderFullPairs is the ordered novel chapter content query.
+func SignedReaderFullPairs(id SearchIdentity, bookID, itemID string) [][2]string {
+	pairs := DeviceQueryPairs(id)
+	pairs = append(pairs,
+		[2]string{"book_id", bookID},
+		[2]string{"item_id", itemID},
+		[2]string{"req_type", "0"},
+	)
+	return pairs
+}
+
+// SignedToneInfoPairs is the ordered audiobook tone-info query.
+func SignedToneInfoPairs(id SearchIdentity, bookID string) [][2]string {
+	pairs := DeviceQueryPairs(id)
+	pairs = append(pairs, [2]string{"book_id", bookID})
+	return pairs
+}
+
 // SignedSearchPairs is the ordered search query. Order is part of the signature.
 // Business fields match SearchQuery. The extra device fields are the portable
 // fingerprint a live anonymous search accepts. ts and _rticket are appended later.
@@ -442,6 +487,38 @@ func UserWorksBody(userID, cursor string) ([]byte, error) {
 		"sub_tab_type":      22,
 		"tab_type":          23,
 		"target_user_id":    userID,
+	})
+}
+
+// CommentListBody is the commentapi comment/list body: one window of the
+// comment_type 20 stream that serves both an episode's danmaku (ordered by
+// offset_time) and its comments (the same items re-sorted by digg count).
+// book_id must be the episode's real series id; the service rejects "0"
+// with code 103001. startOffsetMs is the window's start on the episode
+// timeline and durationMs the episode's total duration (the service does
+// not strictly validate it; paging stops on an empty window / has_more).
+func CommentListBody(episodeID, seriesID string, startOffsetMs, durationMs int64, cursor string) ([]byte, error) {
+	aid, err := strconv.Atoi(AID)
+	if err != nil {
+		return nil, err
+	}
+	return jsonMarshal(map[string]any{
+		"comment_source": 601,
+		"server_channel": 1000,
+		"group_id":       episodeID,
+		"group_type":     30,
+		"comment_type":   20,
+		"sort":           1,
+		"business_param": map[string]any{
+			"book_id":                 seriesID,
+			"start_offset_time":       startOffsetMs,
+			"playlet_item_duration":   durationMs,
+			"need_danmaku_guide_type": []int{1, 3, 4, 2},
+		},
+		"count":             90,
+		"cursor":            cursor,
+		"aid":               aid,
+		"compliance_status": 0,
 	})
 }
 

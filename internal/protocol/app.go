@@ -25,8 +25,24 @@ const (
 	PathSeries     = "/novel/player/video_detail/v1/"
 	// PathSeriesBatch is the player's batch detail read (multi_video_detail,
 	// player scene; observed 2026-10-24).
-	PathSeriesBatch     = "/novel/player/multi_video_detail/player/v1"
-	PathPlayback        = "/novel/player/video_model/v1/"
+	PathSeriesBatch = "/novel/player/multi_video_detail/player/v1"
+	PathPlayback    = "/novel/player/video_model/v1/"
+	// PathAudioPlayInfo is the audiobook chapter model read
+	// (reader-side, guest-issued per chapter; verified 2026-11-06).
+	PathAudioPlayInfo = "/reading/reader/audio/playinfo/"
+	// PathAudioToneInfo lists an audiobook's tones and its related novel.
+	PathAudioToneInfo = "/reading/bookapi/audio/toneinfo/"
+	// PathRegisterKey binds a novel content key to the guest identity
+	// (one POST per identity; see crypt.go).
+	PathRegisterKey = "/reading/crypt/registerkey"
+	// PathReaderFull is the novel chapter content read (encrypted until
+	// the identity has registered a content key).
+	PathReaderFull = "/reading/reader/full/v"
+	// PathVideoTabModel is the reading-side video tab model read
+	// (BookApiService.getVideoModel). Its anonymous issuance is independent
+	// of the player channel's one-model-per-device trial: the same guest
+	// identity can fetch many episodes here (verified 2026-11-06).
+	PathVideoTabModel   = "/reading/bookapi/video_tab/video_model/v"
 	PathAlbum           = "/novel/player/album_detail/v1/"
 	PathSuggest         = "/reading/bookapi/search/suggest/v1/"
 	PathCue             = "/reading/bookapi/search/cue/v1/"
@@ -41,6 +57,9 @@ const (
 	PathSubscribeList = "/reading/user/subscribe/list/v1/"
 	PathProfile       = "/reading/user/profile/get/v1/"
 	PathUserWorks     = "/novel/commentapi/user/profile/%s/v1"
+	// PathCommentList is the commentapi stream behind a video's comments
+	// and danmaku (comment_type 20); observed 2026-11-05.
+	PathCommentList = "/novel/commentapi/comment/list/%s/v1/"
 	// DefaultRankCell is the bookmall cell the 经典 channel serves for the
 	// ranking page (observed: algo 179 推荐榜).
 	DefaultRankCell = "7224069876808155173"

@@ -133,7 +133,9 @@ func Classify(code int, message string) ErrorKind {
 		return KindAuth
 	case 101104, 101109, 101121, 101137, 101145, 101115:
 		return KindContentGone
-	case 100103, 4000, 101142:
+	case 100103, 4000, 101142, 103001:
+		// 103001 is the commentapi family's parameter error
+		// (comment/list rejects a bad group_id/group_type/book_id with it).
 		return KindParam
 	case 110:
 		return KindParam

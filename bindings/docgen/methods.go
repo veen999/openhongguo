@@ -19,6 +19,7 @@ var groups = []group{
 	{"短剧与分集", []string{"GetSeries", "GetSeriesBatch", "ListEpisodes", "Seasons", "SeriesRecommend", "GetAlbum"}},
 	{"榜单与分类", []string{"ShortRank", "ShortFilterPanel", "ShortFilter", "RankRows", "RankGroups", "Ranking", "Categories", "CategoryLanding"}},
 	{"演员", []string{"Person", "PersonWorks"}},
+	{"评论与弹幕", []string{"CommentList"}},
 	{"播放与设备", []string{"ResolvePlayback", "ContentKey", "ResetDevice"}},
 }
 

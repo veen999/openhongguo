@@ -87,6 +87,99 @@ data class CategoryPage(
 }
 
 /**
+ * ChapterContent 是一章小说的正文，已经解密并解压。
+ * HTML 是服务端给的章节 HTML（<article> 包裹，段落是 <blk> 元素），
+ * Paragraphs 是从中按顺序抽出的纯文本段落，供不想解析 HTML 的调用方直接排版。
+ */
+data class ChapterContent(
+    val title: String = "",
+    val html: String = "",
+    val paragraphs: List<String> = emptyList(),
+) {
+    /** 编码成与 Go SDK 相同的 JSON。 */
+    fun toJson(): JSONObject = JSONObject().apply {
+        put("title", title)
+        put("html", html)
+        put("paragraphs", JSONArray(paragraphs))
+    }
+
+    companion object {
+        /** 从 Go SDK 输出的 JSON 解码；缺省的字段取零值。 */
+        fun fromJson(o: JSONObject): ChapterContent = ChapterContent(
+            title = o.opt("title").asString(),
+            html = o.opt("html").asString(),
+            paragraphs = o.opt("paragraphs").asList { it.asString() },
+        )
+    }
+}
+
+/**
+ * CommentItem 是评论/弹幕一体流（comment_type 20）里的一条。
+ * Text 是正文，OffsetMs 是它在分集时间轴上的毫秒位置（弹幕形态），
+ * DiggCount 是点赞数（评论形态按它降序排列）。上游不下发昵称和头像，
+ * 只有 UserID；显示名由调用方按需生成（例如「剧友」加 UserID 后 4 位）。
+ */
+data class CommentItem(
+    val text: String = "",
+    val userId: String = "",
+    val diggCount: Long = 0L,
+    val offsetMs: Long = 0L,
+) {
+    /** 编码成与 Go SDK 相同的 JSON。 */
+    fun toJson(): JSONObject = JSONObject().apply {
+        put("text", text)
+        put("user_id", userId)
+        put("digg_count", diggCount)
+        put("offset_ms", offsetMs)
+    }
+
+    companion object {
+        /** 从 Go SDK 输出的 JSON 解码；缺省的字段取零值。 */
+        fun fromJson(o: JSONObject): CommentItem = CommentItem(
+            text = o.opt("text").asString(),
+            userId = o.opt("user_id").asString(),
+            diggCount = o.opt("digg_count").asLong(),
+            offsetMs = o.opt("offset_ms").asLong(),
+        )
+    }
+}
+
+/**
+ * CommentPage 是 comment/list 的一个时间窗口。Cursor 是服务端给出的
+ * 同窗口续页游标；NextStartMs 是下一窗口的起始毫秒，调用方把它和
+ * Cursor 一起传回 CommentOptions 即可继续翻页。ReportedCount 是
+ * 服务端在游标里自报的弹幕总数，匿名身份实际下发的条数可能少于它；
+ * 游标里没有这个数时为 0。
+ */
+data class CommentPage(
+    val items: List<CommentItem> = emptyList(),
+    val cursor: String = "",
+    val nextStartMs: Long = 0L,
+    val hasMore: Boolean = false,
+    val reportedCount: Int = 0,
+) {
+    /** 编码成与 Go SDK 相同的 JSON。 */
+    fun toJson(): JSONObject = JSONObject().apply {
+        put("items", JSONArray(items.map { it.toJson() }))
+        put("cursor", cursor)
+        put("next_start_ms", nextStartMs)
+        put("has_more", hasMore)
+        put("reported_count", reportedCount)
+    }
+
+    companion object {
+        /** 从 Go SDK 输出的 JSON 解码；缺省的字段取零值。 */
+        fun fromJson(o: JSONObject): CommentPage = CommentPage(
+            items = o.opt("items").asList { CommentItem.fromJson(it.asObject()) },
+            cursor = o.opt("cursor").asString(),
+            nextStartMs = o.opt("next_start_ms").asLong(),
+            hasMore = o.opt("has_more").asBoolean(),
+            reportedCount = o.opt("reported_count").asInt(),
+        )
+    }
+}
+
+/**
  * ContentKey 是受保护播放模型的 CENC（cenc-aes-ctr）内容密钥，
  * 由 sdk.ContentKey 还原。
  */
@@ -531,6 +624,15 @@ data class NewRelease(
      */
     val heat: String = "",
     val note: String = "",
+    /**
+     * Platform 是上游 video_platform：0=小说/有声书，1/2/3/4/5/1024=视频；
+     * 只有带 subscribe_data 的条目才有值，无该行时为 -1（未知）。
+     */
+    val platform: Int = 0,
+    /** ContentType 是上游 content_type：1=真人短剧，1004=漫剧。 */
+    val contentType: Int = 0,
+    /** BookExist 表示该条目同时存在书籍形态（多为有声书/小说信号）。 */
+    val bookExist: Boolean = false,
 ) {
     /** 编码成与 Go SDK 相同的 JSON。 */
     fun toJson(): JSONObject = JSONObject().apply {
@@ -545,6 +647,9 @@ data class NewRelease(
         put("categories", JSONArray(categories))
         put("heat", heat)
         put("note", note)
+        put("platform", platform)
+        put("content_type", contentType)
+        put("book_exist", bookExist)
     }
 
     companion object {
@@ -561,6 +666,9 @@ data class NewRelease(
             categories = o.opt("categories").asList { it.asString() },
             heat = o.opt("heat").asString(),
             note = o.opt("note").asString(),
+            platform = o.opt("platform").asInt(),
+            contentType = o.opt("content_type").asInt(),
+            bookExist = o.opt("book_exist").asBoolean(),
         )
     }
 }
@@ -910,6 +1018,18 @@ data class RankItem(
     val details: List<String> = emptyList(),
     /** Change 是该行相对上一期榜单的变动（如果有）。 */
     val change: RankChange? = null,
+    /** Description 是简介（video_desc），短剧榜单行可用时填充。 */
+    val description: String = "",
+    /** Rating 是评分原文（如 "8.4"），来自 video_data.score。 */
+    val rating: String = "",
+    /** HeatText 是热度文案（如 "4386万热度"），来自 secondary_info_list。 */
+    val heatText: String = "",
+    /** Category 是主分类名（如 "剧情"），来自 sub_title_list 中 data_type=3 的项。 */
+    val category: String = "",
+    /** Actors 是主演名（sub_title_list 中 data_type=23 的项，多个以 " / " 连接）。 */
+    val actors: String = "",
+    /** TagText 是角标文案（如 "新剧"），来自 tag_info.text。 */
+    val tagText: String = "",
 ) {
     /** 编码成与 Go SDK 相同的 JSON。 */
     fun toJson(): JSONObject = JSONObject().apply {
@@ -930,6 +1050,12 @@ data class RankItem(
         put("intro", intro)
         put("details", JSONArray(details))
         put("change", change?.toJson())
+        put("description", description)
+        put("rating", rating)
+        put("heat_text", heatText)
+        put("category", category)
+        put("actors", actors)
+        put("tag_text", tagText)
     }
 
     companion object {
@@ -952,6 +1078,12 @@ data class RankItem(
             intro = o.opt("intro").asString(),
             details = o.opt("details").asList { it.asString() },
             change = (o.opt("change") as? JSONObject)?.let(RankChange::fromJson),
+            description = o.opt("description").asString(),
+            rating = o.opt("rating").asString(),
+            heatText = o.opt("heat_text").asString(),
+            category = o.opt("category").asString(),
+            actors = o.opt("actors").asString(),
+            tagText = o.opt("tag_text").asString(),
         )
     }
 }
@@ -1102,6 +1234,32 @@ data class Series(
     val author: String = "",
     val category: String = "",
     val words: Long = 0L,
+    /** HeatText 是服务端给的热度文案（如 "5418万热度"），来自推荐理由/次要信息行。 */
+    val heatText: String = "",
+    /** Rating 是评分原文（如 "8.4"），只有部分列表面（搜索/榜单）提供。 */
+    val rating: String = "",
+    /** Tags 是分类名以 "·" 连接的标签串（如 "剧情·重生·逆袭"）。 */
+    val tags: String = "",
+    /**
+     * PlayCount 是播放量（series_play_cnt / play_cnt），可用时填充。
+     * JSON 名用 list_play_count，避免与 Series.PlayCount（play_count）冲突。
+     */
+    val listPlayCount: Long = 0L,
+    /**
+     * PlatformCode 是 video_platform（0=书籍/有声书，其余为视频平台），列表面可用时填充。
+     * JSON 名用 platform_code，避免与 Series.Platform（同名 platform）冲突。
+     */
+    val platformCode: Int = 0,
+    /**
+     * TotalPrice 是书籍的整本币价（total_price），>0 表示该书参与金币付费；
+     * 0 表示免费。只在书籍列表面（分类落地页）填充。
+     */
+    val totalPrice: Long = 0L,
+    /**
+     * AudioBookIDs 是该小说关联的真人有声书 book_id 列表
+     * （related_audio_bookids），只在书籍列表面填充。
+     */
+    val audioBookIds: List<String> = emptyList(),
     /** Status 是发布状态；PayType 是付费墙状态。 */
     val status: SeriesStatus = SeriesStatus(0),
     val payType: PayType = PayType(0),
@@ -1147,6 +1305,13 @@ data class Series(
         put("author", author)
         put("category", category)
         put("words", words)
+        put("heat_text", heatText)
+        put("rating", rating)
+        put("tags", tags)
+        put("list_play_count", listPlayCount)
+        put("platform_code", platformCode)
+        put("total_price", totalPrice)
+        put("audio_book_ids", JSONArray(audioBookIds))
         put("status", status.value)
         put("pay_type", payType.value)
         put("content_type", contentType.value)
@@ -1179,6 +1344,13 @@ data class Series(
             author = o.opt("author").asString(),
             category = o.opt("category").asString(),
             words = o.opt("words").asLong(),
+            heatText = o.opt("heat_text").asString(),
+            rating = o.opt("rating").asString(),
+            tags = o.opt("tags").asString(),
+            listPlayCount = o.opt("list_play_count").asLong(),
+            platformCode = o.opt("platform_code").asInt(),
+            totalPrice = o.opt("total_price").asLong(),
+            audioBookIds = o.opt("audio_book_ids").asList { it.asString() },
             status = SeriesStatus(o.opt("status").asInt()),
             payType = PayType(o.opt("pay_type").asInt()),
             contentType = ContentType(o.opt("content_type").asInt()),
@@ -1258,6 +1430,32 @@ data class SeriesSummary(
     val author: String = "",
     val category: String = "",
     val words: Long = 0L,
+    /** HeatText 是服务端给的热度文案（如 "5418万热度"），来自推荐理由/次要信息行。 */
+    val heatText: String = "",
+    /** Rating 是评分原文（如 "8.4"），只有部分列表面（搜索/榜单）提供。 */
+    val rating: String = "",
+    /** Tags 是分类名以 "·" 连接的标签串（如 "剧情·重生·逆袭"）。 */
+    val tags: String = "",
+    /**
+     * PlayCount 是播放量（series_play_cnt / play_cnt），可用时填充。
+     * JSON 名用 list_play_count，避免与 Series.PlayCount（play_count）冲突。
+     */
+    val listPlayCount: Long = 0L,
+    /**
+     * PlatformCode 是 video_platform（0=书籍/有声书，其余为视频平台），列表面可用时填充。
+     * JSON 名用 platform_code，避免与 Series.Platform（同名 platform）冲突。
+     */
+    val platformCode: Int = 0,
+    /**
+     * TotalPrice 是书籍的整本币价（total_price），>0 表示该书参与金币付费；
+     * 0 表示免费。只在书籍列表面（分类落地页）填充。
+     */
+    val totalPrice: Long = 0L,
+    /**
+     * AudioBookIDs 是该小说关联的真人有声书 book_id 列表
+     * （related_audio_bookids），只在书籍列表面填充。
+     */
+    val audioBookIds: List<String> = emptyList(),
 ) {
     /** 编码成与 Go SDK 相同的 JSON。 */
     fun toJson(): JSONObject = JSONObject().apply {
@@ -1270,6 +1468,13 @@ data class SeriesSummary(
         put("author", author)
         put("category", category)
         put("words", words)
+        put("heat_text", heatText)
+        put("rating", rating)
+        put("tags", tags)
+        put("list_play_count", listPlayCount)
+        put("platform_code", platformCode)
+        put("total_price", totalPrice)
+        put("audio_book_ids", JSONArray(audioBookIds))
     }
 
     companion object {
@@ -1284,6 +1489,13 @@ data class SeriesSummary(
             author = o.opt("author").asString(),
             category = o.opt("category").asString(),
             words = o.opt("words").asLong(),
+            heatText = o.opt("heat_text").asString(),
+            rating = o.opt("rating").asString(),
+            tags = o.opt("tags").asString(),
+            listPlayCount = o.opt("list_play_count").asLong(),
+            platformCode = o.opt("platform_code").asInt(),
+            totalPrice = o.opt("total_price").asLong(),
+            audioBookIds = o.opt("audio_book_ids").asList { it.asString() },
         )
     }
 }
@@ -1438,6 +1650,29 @@ data class Suggestion(
             text = o.opt("text").asString(),
             keyword = o.opt("keyword").asString(),
             kind = o.opt("kind").asInt(),
+        )
+    }
+}
+
+/**
+ * ToneInfo 是有声书的音色信息：这本书是否有可播的音色，
+ * 以及（当本书本身是有声书时）它对应的小说 book_id。
+ */
+data class ToneInfo(
+    val relateNovelId: String = "",
+    val hasTones: Boolean = false,
+) {
+    /** 编码成与 Go SDK 相同的 JSON。 */
+    fun toJson(): JSONObject = JSONObject().apply {
+        put("relate_novel_id", relateNovelId)
+        put("has_tones", hasTones)
+    }
+
+    companion object {
+        /** 从 Go SDK 输出的 JSON 解码；缺省的字段取零值。 */
+        fun fromJson(o: JSONObject): ToneInfo = ToneInfo(
+            relateNovelId = o.opt("relate_novel_id").asString(),
+            hasTones = o.opt("has_tones").asBoolean(),
         )
     }
 }
@@ -1620,5 +1855,22 @@ data class ShortRankQuery(
         content?.let { put("content", it) }
         board?.let { put("board", it) }
         cursor?.let { put("cursor", it) }
+    }
+}
+
+/**
+ * CommentOptions 选择 comment/list 的一个时间窗口。StartOffsetMs 是窗口
+ * 在分集时间轴上的起始毫秒（首窗为 0，之后用上一窗的 NextStartMs）；
+ * Cursor 是上一窗给出的游标（首窗为空）；DurationMs 是分集总时长毫秒。
+ */
+data class CommentOptions(
+    val startOffsetMs: Long? = null,
+    val cursor: String? = null,
+    val durationMs: Long? = null,
+) {
+    internal fun toJson(): JSONObject = JSONObject().apply {
+        startOffsetMs?.let { put("startOffsetMs", it) }
+        cursor?.let { put("cursor", it) }
+        durationMs?.let { put("durationMs", it) }
     }
 }

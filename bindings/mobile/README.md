@@ -160,6 +160,12 @@ Swift 包从 GitHub Release 下载 Go 编译出的 xcframework。最低系统版
 | `person(userId)` | 加载一位演员或一个角色的主页 |
 | `personWorks(userId, cursor)` | 加载一位演员参演的短剧，一次一页（主页上的作品 › 剧作） |
 
+### 评论与弹幕
+
+| 方法 | 作用 |
+|---|---|
+| `commentList(episodeId, seriesId, options)` | 加载一集的评论与弹幕，一次一个时间窗口 |
+
 ### 播放与设备
 
 | 方法 | 作用 |

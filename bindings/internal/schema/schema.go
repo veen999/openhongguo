@@ -22,7 +22,7 @@ import (
 // QueryTypes 是 sdk 包里作为参数传入的结构体。
 var QueryTypes = []string{
 	"DiscoverOptions", "SearchOptions", "EpisodeOptions", "LandingOptions",
-	"NewReleaseQuery", "ShortFilterQuery", "ShortRankQuery",
+	"NewReleaseQuery", "ShortFilterQuery", "ShortRankQuery", "CommentOptions",
 }
 
 // Kind 是类型引用的种类。

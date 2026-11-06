@@ -26,29 +26,70 @@ func (c *Client) ResolvePlayback(ctx context.Context, episodeID string, _ Playba
 		if !validID(episodeID) {
 			return nil, fmt.Errorf("invalid episode ID")
 		}
-		p, err := c.ensureSearchGuest(ctx)
-		if err != nil {
-			return nil, err
+		// Primary channel: the reading-side video_tab model read. It does
+		// not consume the player channel's one-model-per-device trial, so a
+		// single guest identity can resolve episode after episode
+		// (verified 2026-11-06: 5 episodes across 2 series, full tiers).
+		if playback, err := c.resolvePlaybackViaTab(ctx, episodeID); err == nil || playback != nil {
+			return playback, err
 		}
-		body, err := protocol.PlaybackBody(episodeID)
-		if err != nil {
-			return nil, err
-		}
-		ticket := c.clock().UnixMilli()
-		rawQuery, headers := sign.SignPOST(protocol.PathPlayback, protocol.DeviceQueryPairs(c.identity(p)), ticket, p.DeviceID, protocol.VersionName, body, nil)
-		raw, _, err := c.doRaw(ctx, "POST", c.apiOrigin+protocol.PathPlayback+"?"+rawQuery, anonymousHeaders(c, p, ticket, headers), body)
-		if err != nil {
-			return nil, err
-		}
-		playback, err := protocol.ParsePlayback(raw, episodeID)
-		if err != nil {
-			return nil, err
-		}
-		if playback.Protected {
-			return playback, ErrDRMProtected
-		}
-		return playback, nil
+		// Fallback: the original player channel. Its per-device trial is
+		// independent of the tab channel, so it can still issue when the
+		// tab read failed; an empty answer here surfaces as
+		// ErrAnonymousLimited and withFreshDevice rotates the device.
+		return c.resolvePlaybackViaPlayer(ctx, episodeID)
 	})
+}
+
+// resolvePlaybackViaTab fetches the playback model through
+// GET /reading/bookapi/video_tab/video_model/v with the search guest
+// identity. The response envelope is identical to the player channel's,
+// so ParsePlayback handles it unchanged.
+func (c *Client) resolvePlaybackViaTab(ctx context.Context, episodeID string) (*model.Playback, error) {
+	p, err := c.ensureSearchGuest(ctx)
+	if err != nil {
+		return nil, err
+	}
+	ticket := c.clock().UnixMilli()
+	rawQuery, headers := sign.SignGET(protocol.SignedVideoTabPairs(c.identity(p), episodeID), ticket, p.DeviceID, protocol.VersionName, nil)
+	raw, _, err := c.doRaw(ctx, "GET", c.apiOrigin+protocol.PathVideoTabModel+"?"+rawQuery, anonymousHeaders(c, p, ticket, headers), nil)
+	if err != nil {
+		return nil, err
+	}
+	playback, err := protocol.ParsePlayback(raw, episodeID)
+	if err != nil {
+		return nil, err
+	}
+	if playback.Protected {
+		return playback, ErrDRMProtected
+	}
+	return playback, nil
+}
+
+// resolvePlaybackViaPlayer is the original signed video_model POST.
+func (c *Client) resolvePlaybackViaPlayer(ctx context.Context, episodeID string) (*model.Playback, error) {
+	p, err := c.ensureSearchGuest(ctx)
+	if err != nil {
+		return nil, err
+	}
+	body, err := protocol.PlaybackBody(episodeID)
+	if err != nil {
+		return nil, err
+	}
+	ticket := c.clock().UnixMilli()
+	rawQuery, headers := sign.SignPOST(protocol.PathPlayback, protocol.DeviceQueryPairs(c.identity(p)), ticket, p.DeviceID, protocol.VersionName, body, nil)
+	raw, _, err := c.doRaw(ctx, "POST", c.apiOrigin+protocol.PathPlayback+"?"+rawQuery, anonymousHeaders(c, p, ticket, headers), body)
+	if err != nil {
+		return nil, err
+	}
+	playback, err := protocol.ParsePlayback(raw, episodeID)
+	if err != nil {
+		return nil, err
+	}
+	if playback.Protected {
+		return playback, ErrDRMProtected
+	}
+	return playback, nil
 }
 
 // ContentKey 从播放模型算出加密分集的内容密钥。

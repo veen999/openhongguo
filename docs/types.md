@@ -40,6 +40,29 @@ CategoryPage 是一个分类落地页及其筛选项。
 | `has_more` | `hasMore` | bool |  |
 | `next_offset` | `nextOffset` | int | NextOffset 是下一页的偏移量，即 LandingOptions.Cursor 的值。 |
 
+### CommentItem
+
+CommentItem 是评论/弹幕一体流（comment_type 20）里的一条。Text 是正文，OffsetMs 是它在分集时间轴上的毫秒位置（弹幕形态），DiggCount 是点赞数（评论形态按它降序排列）。上游不下发昵称和头像，只有 UserID；显示名由调用方按需生成（例如「剧友」加 UserID 后 4 位）。
+
+| 字段 | 驼峰 | 类型 | 说明 |
+|---|---|---|---|
+| `text` | `text` | string |  |
+| `user_id` | `userId` | string |  |
+| `digg_count` | `diggCount` | int64 |  |
+| `offset_ms` | `offsetMs` | int64 |  |
+
+### CommentPage
+
+CommentPage 是 comment/list 的一个时间窗口。Cursor 是服务端给出的同窗口续页游标；NextStartMs 是下一窗口的起始毫秒，调用方把它和 Cursor 一起传回 CommentOptions 即可继续翻页。ReportedCount 是服务端在游标里自报的弹幕总数，匿名身份实际下发的条数可能少于它；游标里没有这个数时为 0。
+
+| 字段 | 驼峰 | 类型 | 说明 |
+|---|---|---|---|
+| `items` | `items` | [CommentItem](#commentitem) 列表 |  |
+| `cursor` | `cursor` | string |  |
+| `next_start_ms` | `nextStartMs` | int64 |  |
+| `has_more` | `hasMore` | bool |  |
+| `reported_count` | `reportedCount` | int |  |
+
 ### ContentKey
 
 ContentKey 是受保护播放模型的 CENC（cenc-aes-ctr）内容密钥，由 sdk.ContentKey 还原。
@@ -663,3 +686,13 @@ ShortRankQuery 选择一个短剧榜单。Content 是 RankContent ID（all、hum
 | `content` | string |  |
 | `board` | string |  |
 | `cursor` | string |  |
+
+### CommentOptions
+
+CommentOptions 选择 comment/list 的一个时间窗口。StartOffsetMs 是窗口在分集时间轴上的起始毫秒（首窗为 0，之后用上一窗的 NextStartMs）；Cursor 是上一窗给出的游标（首窗为空）；DurationMs 是分集总时长毫秒。
+
+| 字段 | 类型 | 说明 |
+|---|---|---|
+| `startOffsetMs` | int64 |  |
+| `cursor` | string |  |
+| `durationMs` | int64 |  |
