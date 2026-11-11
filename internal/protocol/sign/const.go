@@ -42,10 +42,15 @@ func medusaAESIV() []byte {
 }
 
 const (
-	gorgonSDKVersion uint32 = 67503104
-	appID                   = "8662"
-	channelID               = "1588093228"
+	appID     = "8662"
+	channelID = "1588093228"
 )
+
+// SDKVersionWord is the metasec generation packed into the gorgon
+// input and medusa field 9: major<<24 | minor<<16 | patch<<8 | low
+// platform/flag bits. 67503104 = 0x04060400 (v04.06.04, low bits 0).
+// Overridable for generation experiments (see MedusaSDKVersion).
+var SDKVersionWord uint32 = 67503104
 
 var branch2SV = [64]uint32{
 	0xa7aefe20, 0x7149f1d6, 0x47e4ca07, 0xe9b58f67, 0x93b924de, 0xc614d0f5, 0x38afe0ef, 0xb2bbad73,

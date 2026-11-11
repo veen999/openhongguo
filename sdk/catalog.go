@@ -243,6 +243,9 @@ func anonymousHeaders(c *Client, p *DeviceProfile, ticket int64, headers map[str
 	headers["x-ss-dp"] = protocol.AID
 	headers["lc"] = "101"
 	headers["x-reading-request"] = protocol.ReadingRequestID(ticket, c.randomInt31())
+	if p != nil && p.DeviceToken != "" {
+		headers["x-tt-dt"] = p.DeviceToken
+	}
 	if p != nil && p.TTReq != "" {
 		headers["Cookie"] = guestCookie(p)
 	}

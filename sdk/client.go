@@ -31,6 +31,8 @@ const (
 // Client 也可以并发使用。
 type Client struct {
 	guestMu        sync.Mutex
+	playbackMu     sync.Mutex
+	playbackProf   *DeviceProfile
 	transport      Transport
 	profileStore   ProfileStore
 	signer         Signer
@@ -356,7 +358,7 @@ func (c *Client) loadOrRegister(ctx context.Context, needTicket bool) (*DevicePr
 	}
 	p.DeviceID = registered.DeviceID
 	p.InstallID = registered.InstallID
-	p.DeviceToken = ""
+	p.DeviceToken = registered.DeviceToken
 	applyGuestCookies(p, cookies)
 	if needTicket && len(cookies) > 0 && p.TTReq == "" {
 		return nil, fmt.Errorf("%w: guest ticket missing", ErrAnonymousLimited)

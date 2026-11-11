@@ -45,6 +45,17 @@ export interface CategoryPage {
 }
 
 /**
+ * ChapterContent 是一章小说的正文，已经解密并解压。
+ * HTML 是服务端给的章节 HTML（<article> 包裹，段落是 <blk> 元素），
+ * Paragraphs 是从中按顺序抽出的纯文本段落，供不想解析 HTML 的调用方直接排版。
+ */
+export interface ChapterContent {
+  title: string;
+  html: string;
+  paragraphs?: string[];
+}
+
+/**
  * CommentItem 是评论/弹幕一体流（comment_type 20）里的一条。
  * Text 是正文，OffsetMs 是它在分集时间轴上的毫秒位置（弹幕形态），
  * DiggCount 是点赞数（评论形态按它降序排列）。上游不下发昵称和头像，
@@ -321,6 +332,19 @@ export interface NewRelease {
    */
   heat?: string;
   note?: string;
+  /**
+   * Platform 是上游 video_platform：0=小说/有声书，1/2/3/4/5/1024=视频；
+   * 只有带 subscribe_data 的条目才有值，无该行时为 -1（未知）。
+   */
+  platform: number;
+  /**
+   * ContentType 是上游 content_type：1=真人短剧，1004=漫剧。
+   */
+  content_type?: number;
+  /**
+   * BookExist 表示该条目同时存在书籍形态（多为有声书/小说信号）。
+   */
+  book_exist?: boolean;
 }
 
 /**
@@ -543,6 +567,30 @@ export interface RankItem {
    * Change 是该行相对上一期榜单的变动（如果有）。
    */
   change?: RankChange;
+  /**
+   * Description 是简介（video_desc），短剧榜单行可用时填充。
+   */
+  description?: string;
+  /**
+   * Rating 是评分原文（如 "8.4"），来自 video_data.score。
+   */
+  rating?: string;
+  /**
+   * HeatText 是热度文案（如 "4386万热度"），来自 secondary_info_list。
+   */
+  heat_text?: string;
+  /**
+   * Category 是主分类名（如 "剧情"），来自 sub_title_list 中 data_type=3 的项。
+   */
+  category?: string;
+  /**
+   * Actors 是主演名（sub_title_list 中 data_type=23 的项，多个以 " / " 连接）。
+   */
+  actors?: string;
+  /**
+   * TagText 是角标文案（如 "新剧"），来自 tag_info.text。
+   */
+  tag_text?: string;
 }
 
 /**
@@ -719,6 +767,38 @@ export interface SeriesSummary {
   author?: string;
   category?: string;
   words?: number;
+  /**
+   * HeatText 是服务端给的热度文案（如 "5418万热度"），来自推荐理由/次要信息行。
+   */
+  heat_text?: string;
+  /**
+   * Rating 是评分原文（如 "8.4"），只有部分列表面（搜索/榜单）提供。
+   */
+  rating?: string;
+  /**
+   * Tags 是分类名以 "·" 连接的标签串（如 "剧情·重生·逆袭"）。
+   */
+  tags?: string;
+  /**
+   * PlayCount 是播放量（series_play_cnt / play_cnt），可用时填充。
+   * JSON 名用 list_play_count，避免与 Series.PlayCount（play_count）冲突。
+   */
+  list_play_count?: number;
+  /**
+   * PlatformCode 是 video_platform（0=书籍/有声书，其余为视频平台），列表面可用时填充。
+   * JSON 名用 platform_code，避免与 Series.Platform（同名 platform）冲突。
+   */
+  platform_code?: number;
+  /**
+   * TotalPrice 是书籍的整本币价（total_price），>0 表示该书参与金币付费；
+   * 0 表示免费。只在书籍列表面（分类落地页）填充。
+   */
+  total_price?: number;
+  /**
+   * AudioBookIDs 是该小说关联的真人有声书 book_id 列表
+   * （related_audio_bookids），只在书籍列表面填充。
+   */
+  audio_book_ids?: string[];
 }
 
 /**
@@ -803,6 +883,15 @@ export interface Suggestion {
    * Kind 是服务端的行类型，原样透传。
    */
   kind?: number;
+}
+
+/**
+ * ToneInfo 是有声书的音色信息：这本书是否有可播的音色，
+ * 以及（当本书本身是有声书时）它对应的小说 book_id。
+ */
+export interface ToneInfo {
+  relate_novel_id?: string;
+  has_tones: boolean;
 }
 
 /**

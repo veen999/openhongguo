@@ -70,11 +70,14 @@ func testClient(t *testing.T, handler http.Handler) (*sdk.Client, *logCapture) {
 func happyHandler(t *testing.T, seen *[]captured) http.Handler {
 	t.Helper()
 	files := map[string]string{
-		protocol.PathDiscover: "discover-response.json",
-		protocol.PathSearch:   "search-response.json",
-		protocol.PathSeries:   "series-response.json",
-		protocol.PathPlayback: "drm-playback.json",
-		protocol.PathRegister: "register-response.json",
+		protocol.PathDiscover:      "discover-response.json",
+		protocol.PathSearch:        "search-response.json",
+		protocol.PathSeries:        "series-response.json",
+		protocol.PathPlayback:      "drm-playback.json",
+		protocol.PathPlaybackMulti: "drm-playback.json",
+		fmt.Sprintf(protocol.PathPlaybackMultiV2Fmt, "default"): "drm-playback.json",
+		protocol.PathVideoTabMulti: "drm-playback.json",
+		protocol.PathRegister:      "register-response.json",
 	}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		body, _ := io.ReadAll(r.Body)
@@ -457,6 +460,30 @@ func assertAnonymousWire(t *testing.T, seen []captured) {
 			if hit.Header.Get("x-gorgon") == "" || hit.Header.Get("x-ss-stub") == "" {
 				t.Fatal("playback signature missing")
 			}
+		case protocol.PathPlaybackMulti, fmt.Sprintf(protocol.PathPlaybackMultiV2Fmt, "default"):
+			played = true
+			if hit.Header.Get("Content-Encoding") != "gzip" {
+				t.Fatal("multi playback body is not gzipped")
+			}
+			if hit.Header.Get("x-gorgon") == "" || hit.Header.Get("x-ss-stub") == "" {
+				t.Fatal("multi playback signature missing")
+			}
+			q, _ := url.ParseQuery(hit.RawQuery)
+			if q.Get("version_code") != protocol.PlaybackVersionCode {
+				t.Fatalf("multi playback version = %s", q.Get("version_code"))
+			}
+		case protocol.PathVideoTabMulti:
+			played = true
+			q, _ := url.ParseQuery(hit.RawQuery)
+			if q.Get("video_id") != "7100000000000201" || q.Get("version_code") != protocol.TabVersionCode {
+				t.Fatalf("tab multi query = %s", hit.RawQuery)
+			}
+			if hit.Header.Get("x-gorgon") == "" {
+				t.Fatal("tab multi signature missing")
+			}
+		case protocol.PathVideoTabModel:
+			// Singular tab fallback probe; the fixture server 404s it and
+			// the chain falls through to a channel that issues.
 		default:
 			t.Fatalf("unexpected path %s", hit.Path)
 		}
@@ -1323,7 +1350,7 @@ func TestDeviceIsRegisteredStoredAndPresented(t *testing.T) {
 	if _, err := newClient(store, pad).SearchCues(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	wantUA := "com.phoenix.read/73932 (Linux; U; Android 11; zh_CN; 21051182C; Build/RKQ1.200826.002; Cronet/TTNetVersion:8d40f833 2026-03-03 QuicVersion:21ac1950 2025-11-18)"
+	wantUA := "com.phoenix.read/74516 (Linux; U; Android 11; zh_CN; 21051182C; Build/RKQ1.200826.002; Cronet/TTNetVersion:8d40f833 2026-03-03 QuicVersion:21ac1950 2025-11-18)"
 	if reqs[0].path != protocol.PathRegister || reqs[0].ua != wantUA {
 		t.Fatalf("register = %+v", reqs[0])
 	}

@@ -35,7 +35,7 @@ func xGorgon(query string, body []byte, hasBody bool, khronos, random uint32) st
 	input = append(input, queryMD5[:4]...)
 	input = append(input, bodyMD5[:4]...)
 	input = append(input, 0, 0, 0, 0)
-	input = append(input, le32(gorgonSDKVersion)...)
+	input = append(input, le32(SDKVersionWord)...)
 	input = append(input, be32(khronos)...)
 	key := []byte{0x4a, 0x40, 0x16, byte((random >> 8) & 255), 0x47, 0x6c, 0x01, byte(random & 255)}
 	out := rc4Gorgon(input, key)

@@ -1,9 +1,41 @@
 package sign
 
 import (
+	"crypto/rand"
 	"encoding/base64"
 	"encoding/binary"
 	"encoding/hex"
+	"time"
+)
+
+// Medusa process snapshot: the genuine client stamps its medusa
+// envelope with a per-process random nonce (the same value in message
+// field 16 and device-proto field 5) and the process start time in the
+// device-proto timestamp fields. These are generated once per process,
+// mirroring that behavior. (An earlier revision replayed a captured
+// Oct-2024 snapshot — two different nonces and year-old timestamps.)
+var (
+	MedusaNonce           = processNonce()
+	MedusaDeviceNonce     = MedusaNonce
+	MedusaDeviceStartedMS = time.Now().UnixMilli()
+)
+
+func processNonce() string {
+	var b [18]byte
+	if _, err := rand.Read(b[:]); err != nil {
+		return "AXYQOS6n2m60x1fVZHIrH3iol"
+	}
+	return base64.RawURLEncoding.EncodeToString(b[:])
+}
+
+// Medusa generation strings stamped into the envelope: message field 8
+// (SDK version) and env field 6 (env version). Defaults are the
+// v04.06.04 generation this implementation was captured from; newer
+// client generations carry their own (the 7.4.5.16 client's metasec
+// reports v04.10.03). Overridable for generation experiments.
+var (
+	MedusaSDKVersion = "v04.06.04-ml-android"
+	MedusaEnvVersion = "v04.06.04.03-bugfix"
 )
 
 type Entropy struct {
@@ -73,7 +105,7 @@ func deviceProto(deviceID string) []byte {
 	out = append(out, protoSInt(2, 2)...)
 	out = append(out, protoString(3, appID)...)
 	out = append(out, protoString(4, deviceID)...)
-	out = append(out, protoString(5, "Ai6svO3PyrwDOUSmO6ZcResxu")...)
+	out = append(out, protoString(5, MedusaDeviceNonce)...)
 	out = append(out, protoString(6, "!noperm!")...)
 	out = append(out, protoSInt(7, -888888)...)
 	out = append(out, protoSInt(8, -888888)...)
@@ -83,19 +115,19 @@ func deviceProto(deviceID string) []byte {
 	out = append(out, protoString(12, "Asia/Shanghai,8")...)
 	out = append(out, protoString(13, "zh_CN")...)
 	out = append(out, protoSInt(14, 4)...)
-	out = append(out, protoFloat(16, 255.24993896484375)...)
-	out = append(out, protoFloat(17, 35.58599090576172)...)
-	out = append(out, protoFloat(18, 3.467449188232422)...)
-	out = append(out, protoFloat(19, 3.467449188232422)...)
-	out = append(out, protoFloat(20, 255.1754913330078)...)
-	out = append(out, protoFloat(21, 42.17544174194336)...)
+	out = append(out, protoFloat(16, 0)...)
+	out = append(out, protoFloat(17, 0)...)
+	out = append(out, protoFloat(18, 0)...)
+	out = append(out, protoFloat(19, 0)...)
+	out = append(out, protoFloat(20, 0)...)
+	out = append(out, protoFloat(21, 0)...)
 	out = append(out, protoString(22, "16")...)
 	out = append(out, protoSInt(23, 41)...)
 	out = append(out, protoSInt(24, 36)...)
-	out = append(out, protoSInt(25, 1728388016635)...)
-	out = append(out, protoSInt(26, 1728388016635)...)
-	out = append(out, protoSInt(27, 1728388016635)...)
-	out = append(out, protoSInt(28, 1728388016637)...)
+	out = append(out, protoSInt(25, MedusaDeviceStartedMS)...)
+	out = append(out, protoSInt(26, MedusaDeviceStartedMS)...)
+	out = append(out, protoSInt(27, MedusaDeviceStartedMS)...)
+	out = append(out, protoSInt(28, MedusaDeviceStartedMS)...)
 	out = append(out, protoSInt(29, -1)...)
 	out = append(out, protoString(30, "25053RT47C")...)
 	out = append(out, protoString(31, "Redmi")...)
@@ -131,7 +163,7 @@ func assembleMedusa(rawURL string, body []byte, hasBody bool, khronos uint32, de
 	env = append(env, protoSInt(2, 146331399)...)
 	env = append(env, protoSInt(3, 146331396)...)
 	env = append(env, protoSInt(5, 7)...)
-	env = append(env, protoString(6, "v04.06.04.03-bugfix")...)
+	env = append(env, protoString(6, MedusaEnvVersion)...)
 	env = append(env, protoSInt(7, entropy.EnvPID)...)
 	env = append(env, protoBytes(12, deviceProto(deviceID))...)
 	env = append(env, protoBytes(13, nested13)...)
@@ -150,14 +182,14 @@ func assembleMedusa(rawURL string, body []byte, hasBody bool, khronos uint32, de
 	message = append(message, protoString(5, deviceID)...)
 	message = append(message, protoString(6, channelID)...)
 	message = append(message, protoString(7, versionName)...)
-	message = append(message, protoString(8, "v04.06.04-ml-android")...)
-	message = append(message, protoSInt(9, 67503104)...)
+	message = append(message, protoString(8, MedusaSDKVersion)...)
+	message = append(message, protoSInt(9, int64(SDKVersionWord))...)
 	message = append(message, protoBytes(10, fixed2)...)
 	message = append(message, protoSInt(12, int64(khronos))...)
 	message = append(message, protoBytes(13, queryBodyTS)...)
 	message = append(message, protoBytes(14, querySM3[:6])...)
 	message = append(message, protoBytes(15, nested)...)
-	message = append(message, protoString(16, "AXYQOS6n2m60x1fVZHIrH3iol")...)
+	message = append(message, protoString(16, MedusaNonce)...)
 	message = append(message, protoSInt(17, int64(khronos))...)
 	message = append(message, protoBytes(19, queryHash[:])...)
 	message = append(message, protoString(20, "none")...)

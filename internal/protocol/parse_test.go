@@ -1016,7 +1016,7 @@ func TestOneDeviceDrivesQueryRegistrationAndUserAgent(t *testing.T) {
 			t.Fatalf("register %s = %v, want %v", key, header[key], want)
 		}
 	}
-	if ua := UserAgent(pad); ua != "com.phoenix.read/73932 (Linux; U; Android 11; zh_CN; 21051182C; Build/RKQ1.200826.002; Cronet/TTNetVersion:8d40f833 2026-03-03 QuicVersion:21ac1950 2025-11-18)" {
+	if ua := UserAgent(pad); ua != "com.phoenix.read/74516 (Linux; U; Android 11; zh_CN; 21051182C; Build/RKQ1.200826.002; Cronet/TTNetVersion:8d40f833 2026-03-03 QuicVersion:21ac1950 2025-11-18)" {
 		t.Fatalf("user agent = %s", ua)
 	}
 	// The zero device is the default phone everywhere.

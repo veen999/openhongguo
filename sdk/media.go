@@ -1,14 +1,35 @@
 package sdk
 
 import (
+	"bytes"
+	"compress/gzip"
 	"context"
+	"crypto/rand"
+	"encoding/binary"
+	"encoding/json"
 	"fmt"
+	"time"
 
 	"github.com/beilunyang/openhongguo/internal/drm"
 	"github.com/beilunyang/openhongguo/internal/protocol"
 	"github.com/beilunyang/openhongguo/internal/protocol/sign"
 	"github.com/beilunyang/openhongguo/sdk/model"
 )
+
+// readingRequestTicket is this process's x-reading-request value: the
+// shipped client's response-integrity interceptor (SecurityHelper)
+// stamps every RPC request with "<process start millis>-<random int>"
+// and the server echoes it in x-reading-response. One value per
+// process, generated once.
+var readingRequestTicket = func() string {
+	var b [4]byte
+	_, _ = rand.Read(b[:])
+	n := int64(int32(binary.BigEndian.Uint32(b[:])))
+	if n < 0 {
+		n = -n
+	}
+	return fmt.Sprintf("%d-%d", time.Now().UnixMilli(), n)
+}()
 
 // PlaybackOptions 预留给码流规格或接口的选择。
 // 第二阶段按服务端下发的原样解析模型，由调用方挑选流。
@@ -26,19 +47,196 @@ func (c *Client) ResolvePlayback(ctx context.Context, episodeID string, _ Playba
 		if !validID(episodeID) {
 			return nil, fmt.Errorf("invalid episode ID")
 		}
-		// Primary channel: the reading-side video_tab model read. It does
-		// not consume the player channel's one-model-per-device trial, so a
-		// single guest identity can resolve episode after episode
-		// (verified 2026-11-06: 5 episodes across 2 series, full tiers).
-		if playback, err := c.resolvePlaybackViaTab(ctx, episodeID); err == nil || playback != nil {
+		// Issuance channels, in order. Since 2026-11-10/11 the singular
+		// reads return empty for anonymous guests; the multi reads are
+		// the paths that still issue, and they run on a dedicated
+		// in-memory playback identity (registered the current way, see
+		// playback_identity.go): player multi first, then the video_tab
+		// multi. When both come back empty the identity is dropped, a
+		// fresh one is registered and the tab multi is retried once —
+		// playback identities can be single-use. The singular channels
+		// on the stored catalog guest stay as final fallbacks.
+		// A channel that produced a model (err may be ErrDRMProtected)
+		// ends the chain; empty answers fall through.
+		// The singular player POST with real Argus/Ladon signing goes
+		// first: it is the channel the service restored on 2026-11-10
+		// (see resolvePlaybackViaPlayer). The multi channels stay as
+		// fallbacks.
+		if playback, err := c.resolvePlaybackViaPlayer(ctx, episodeID); playback != nil {
 			return playback, err
 		}
-		// Fallback: the original player channel. Its per-device trial is
-		// independent of the tab channel, so it can still issue when the
-		// tab read failed; an empty answer here surfaces as
-		// ErrAnonymousLimited and withFreshDevice rotates the device.
+		if pb, err := c.playbackIdentity(ctx); err == nil {
+			if playback, err := c.resolvePlaybackViaMultiPlayerV2(ctx, pb, episodeID); playback != nil {
+				return playback, err
+			}
+			if playback, err := c.resolvePlaybackViaMultiPlayer(ctx, pb, episodeID); playback != nil {
+				return playback, err
+			}
+			if playback, err := c.resolvePlaybackViaTabMulti(ctx, pb, episodeID); playback != nil {
+				return playback, err
+			}
+			c.dropPlaybackIdentityIf(pb)
+			if pb2, err := c.playbackIdentity(ctx); err == nil {
+				if playback, err := c.resolvePlaybackViaTabMulti(ctx, pb2, episodeID); playback != nil {
+					return playback, err
+				}
+			}
+		}
+		if playback, err := c.resolvePlaybackViaTab(ctx, episodeID); playback != nil {
+			return playback, err
+		}
 		return c.resolvePlaybackViaPlayer(ctx, episodeID)
 	})
+}
+
+// playbackHeaders builds the header set for the multi playback
+// channels from the signing headers: the current generation's UA and
+// store-region headers, and none of the catalog extras (no guest
+// cookie, no lc / x-reading-request, no bdturing placeholder).
+func playbackHeaders(signHeaders map[string]string, device model.Device, versionCode string) map[string]string {
+	h := make(map[string]string, len(signHeaders)+3)
+	for k, v := range signHeaders {
+		h[k] = v
+	}
+	h["User-Agent"] = protocol.UserAgentCronet(device, versionCode)
+	h["x-ss-dp"] = protocol.AID
+	h["x-reading-request"] = readingRequestTicket
+	h["x-tt-store-region"] = "cn"
+	h["x-tt-store-region-src"] = "did"
+	if versionCode == protocol.PlaybackVersionCode {
+		h["passport-sdk-version"] = "5051452"
+	} else {
+		h["passport-sdk-version"] = "50561"
+	}
+	delete(h, "x-vc-bdturing-sdk-version")
+	return h
+}
+
+// resolvePlaybackViaMultiPlayer fetches the playback model through
+// POST /novel/player/multi_video_model/v1/ on the B host: the seriessdk
+// batch request (one episode), gzipped, signed on the medusa branch the
+// channel accepts (branch 0), under the PlaybackVersion profile,
+// presented by the dedicated playback identity p.
+func (c *Client) resolvePlaybackViaMultiPlayer(ctx context.Context, p *DeviceProfile, episodeID string) (*model.Playback, error) {
+	body, err := protocol.MultiPlaybackBody(episodeID)
+	if err != nil {
+		return nil, err
+	}
+	gz, err := gzipBytes(body)
+	if err != nil {
+		return nil, err
+	}
+	ticket := c.clock().UnixMilli()
+	rawQuery, headers := sign.SignPOSTBranch(protocol.PathPlaybackMulti, protocol.PlaybackMultiPairs(c.identity(p)), ticket, p.DeviceID, protocol.PlaybackVersionName, gz, nil, 0)
+	h := playbackHeaders(headers, c.deviceOf(p), protocol.PlaybackVersionCode)
+	if p.DeviceToken != "" {
+		h["x-tt-dt"] = p.DeviceToken
+	}
+	h["Content-Encoding"] = "gzip"
+	raw, _, err := c.doRaw(ctx, "POST", c.multiOrigin()+protocol.PathPlaybackMulti+"?"+rawQuery, h, gz)
+	if err != nil {
+		return nil, err
+	}
+	return finishMultiPlayback(raw, episodeID)
+}
+
+// resolvePlaybackViaMultiPlayerV2 fetches the playback model through
+// POST /novel/player/multi_video_model/<dr_scene>/v1/ on the B host —
+// the seriessdk V2 batch read the shipped client's immersive player
+// and download line actually call (V1 multi is its in-method backup).
+// Same signing and identity as the V1 multi channel; the scene rides
+// in the path and in the body's dr_scene.
+func (c *Client) resolvePlaybackViaMultiPlayerV2(ctx context.Context, p *DeviceProfile, episodeID string) (*model.Playback, error) {
+	const scene = "default"
+	body, err := protocol.MultiPlaybackBodyV2(episodeID, scene)
+	if err != nil {
+		return nil, err
+	}
+	gz, err := gzipBytes(body)
+	if err != nil {
+		return nil, err
+	}
+	path := fmt.Sprintf(protocol.PathPlaybackMultiV2Fmt, scene)
+	ticket := c.clock().UnixMilli()
+	rawQuery, headers := sign.SignPOSTBranch(path, protocol.PlaybackMultiPairs(c.identity(p)), ticket, p.DeviceID, protocol.PlaybackVersionName, gz, nil, 0)
+	h := playbackHeaders(headers, c.deviceOf(p), protocol.PlaybackVersionCode)
+	if p.DeviceToken != "" {
+		h["x-tt-dt"] = p.DeviceToken
+	}
+	h["Content-Encoding"] = "gzip"
+	raw, _, err := c.doRaw(ctx, "POST", c.multiOrigin()+path+"?"+rawQuery, h, gz)
+	if err != nil {
+		return nil, err
+	}
+	return finishMultiPlayback(raw, episodeID)
+}
+
+// resolvePlaybackViaTabMulti fetches the playback model through
+// GET /reading/bookapi/video_tab/multi_video_model/v1/ on the B host,
+// under the TabVersion profile, branch-0 signed, presented by the
+// dedicated playback identity p.
+func (c *Client) resolvePlaybackViaTabMulti(ctx context.Context, p *DeviceProfile, episodeID string) (*model.Playback, error) {
+	ticket := c.clock().UnixMilli()
+	rawQuery, headers := sign.SignGETBranch(protocol.SignedVideoTabMultiPairs(c.identity(p), episodeID), ticket, p.DeviceID, protocol.TabVersionName, nil, 0)
+	h := playbackHeaders(headers, c.deviceOf(p), protocol.TabVersionCode)
+	if p.DeviceToken != "" {
+		h["x-tt-dt"] = p.DeviceToken
+	}
+	raw, _, err := c.doRaw(ctx, "GET", c.multiOrigin()+protocol.PathVideoTabMulti+"?"+rawQuery, h, nil)
+	if err != nil {
+		return nil, err
+	}
+	return finishMultiPlayback(raw, episodeID)
+}
+
+// finishMultiPlayback parses a multi-channel response: the model sits
+// under data.video_model_data[<episode>] (an object shaped like the
+// singular data), or directly at data.video_model.
+func finishMultiPlayback(raw []byte, episodeID string) (*model.Playback, error) {
+	playback, err := parseMultiPlayback(raw, episodeID)
+	if err != nil {
+		return nil, err
+	}
+	if playback.Protected {
+		return playback, ErrDRMProtected
+	}
+	return playback, nil
+}
+
+func parseMultiPlayback(raw []byte, episodeID string) (*model.Playback, error) {
+	var probe struct {
+		Data struct {
+			VideoModel     json.RawMessage            `json:"video_model"`
+			VideoModelData map[string]json.RawMessage `json:"video_model_data"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(raw, &probe); err != nil {
+		return nil, err
+	}
+	if len(probe.Data.VideoModel) > 0 {
+		return protocol.ParsePlayback(raw, episodeID)
+	}
+	entry, ok := probe.Data.VideoModelData[episodeID]
+	if !ok || len(entry) == 0 {
+		return nil, fmt.Errorf("multi playback response has no model for episode %s", episodeID)
+	}
+	wrapped := make([]byte, 0, len(entry)+24)
+	wrapped = append(wrapped, `{"code":0,"data":`...)
+	wrapped = append(wrapped, entry...)
+	wrapped = append(wrapped, '}')
+	return protocol.ParsePlayback(wrapped, episodeID)
+}
+
+func gzipBytes(b []byte) ([]byte, error) {
+	var buf bytes.Buffer
+	w := gzip.NewWriter(&buf)
+	if _, err := w.Write(b); err != nil {
+		return nil, err
+	}
+	if err := w.Close(); err != nil {
+		return nil, err
+	}
+	return buf.Bytes(), nil
 }
 
 // resolvePlaybackViaTab fetches the playback model through
@@ -67,6 +265,11 @@ func (c *Client) resolvePlaybackViaTab(ctx context.Context, episodeID string) (*
 }
 
 // resolvePlaybackViaPlayer is the original signed video_model POST.
+// Since 2026-11-10 the endpoint validates real x-argus / x-ladon and
+// rejects the request when x-medusa rides along, so it is signed with
+// SignPlaybackPOST (Argus 551 envelope + Ladon, no Medusa) — the fix
+// from upstream PR beilunyang/openhongguo#7 (bed1459), live-verified
+// there against this same endpoint.
 func (c *Client) resolvePlaybackViaPlayer(ctx context.Context, episodeID string) (*model.Playback, error) {
 	p, err := c.ensureSearchGuest(ctx)
 	if err != nil {
@@ -77,7 +280,7 @@ func (c *Client) resolvePlaybackViaPlayer(ctx context.Context, episodeID string)
 		return nil, err
 	}
 	ticket := c.clock().UnixMilli()
-	rawQuery, headers := sign.SignPOST(protocol.PathPlayback, protocol.DeviceQueryPairs(c.identity(p)), ticket, p.DeviceID, protocol.VersionName, body, nil)
+	rawQuery, headers := sign.SignPlaybackPOST(protocol.PathPlayback, protocol.DeviceQueryPairs(c.identity(p)), ticket, p.DeviceID, protocol.VersionName, body, nil)
 	raw, _, err := c.doRaw(ctx, "POST", c.apiOrigin+protocol.PathPlayback+"?"+rawQuery, anonymousHeaders(c, p, ticket, headers), body)
 	if err != nil {
 		return nil, err

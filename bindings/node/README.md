@@ -93,6 +93,14 @@ npm install openhongguo
 |---|---|
 | `commentList(episodeId, seriesId, options)` | 加载一集的评论与弹幕，一次一个时间窗口 |
 
+### 小说与听书
+
+| 方法 | 作用 |
+|---|---|
+| `audioPlayback(bookId, itemId, toneId)` | 加载一章有声书的播放模型，形状与 ResolvePlayback 相同：各码流的地址、编码、大小 |
+| `toneInfo(bookId)` | 查询一本书的音色信息：是否有可播音色，以及本书若是有声书时对应的小说 book_id |
+| `chapterContent(bookId, itemId)` | 读取一章小说正文并解密 |
+
 ### 播放与设备
 
 | 方法 | 作用 |
@@ -253,6 +261,7 @@ try {
 | `TRANSPORT` | 网络请求失败 | 是 |
 | `SIGNATURE_REJECTED` | 服务端拒绝了请求的签名 | 否 |
 | `CONTENT_UNAVAILABLE` | 内容已下架、不存在，或当前调用方无权访问 | 否 |
+| `CONTENT_LOCKED` | 章节正文对当前身份未解锁：内容键未注册成功，或该章节属于付费/VIP 内容，匿名身份读不到 | 否 |
 | `PARAM_INVALID` | 服务端认为请求参数无效 | 否 |
 | `CHALLENGE_REQUIRED` | 服务端要求验证码或其他验证，匿名客户端无法继续 | 否 |
 | `DEVICE_REJECTED` | 匿名设备被拒绝，需要重置设备后重新注册 | 否 |
