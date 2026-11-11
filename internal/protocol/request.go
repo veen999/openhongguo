@@ -159,6 +159,13 @@ type SearchIdentity struct {
 
 // DeviceQueryPairs is the ordered anonymous device query. Order is part of the signature.
 func DeviceQueryPairs(id SearchIdentity) [][2]string {
+	return deviceQueryPairs(id, VersionCode, VersionName)
+}
+
+// deviceQueryPairs is DeviceQueryPairs with an explicit version profile.
+// A few channels present the client generation that introduced them
+// rather than the app's current version (see app.go).
+func deviceQueryPairs(id SearchIdentity, versionCode, versionName string) [][2]string {
 	d := id.Device.OrDefault()
 	kind, pad := "phone", "0"
 	if d.Pad {
@@ -172,8 +179,8 @@ func DeviceQueryPairs(id SearchIdentity) [][2]string {
 		{"aid", AID},
 		{"app_name", AppName},
 		{"cdid", id.CDID},
-		{"version_code", VersionCode},
-		{"version_name", VersionName},
+		{"version_code", versionCode},
+		{"version_name", versionName},
 		{"device_platform", DevicePlatform},
 		{"os", "android"},
 		{"ssmix", "a"},
@@ -182,13 +189,13 @@ func DeviceQueryPairs(id SearchIdentity) [][2]string {
 		{"language", "zh"},
 		{"os_api", strconv.Itoa(d.OSAPI)},
 		{"os_version", d.OSVersion},
-		{"manifest_version_code", VersionCode},
+		{"manifest_version_code", versionCode},
 		{"resolution", d.Resolution},
 		{"dpi", strconv.Itoa(d.DPI)},
-		{"update_version_code", VersionCode},
+		{"update_version_code", versionCode},
 		{"host_abi", "arm64-v8a"},
 		{"dragon_device_type", kind},
-		{"pv_player", VersionCode},
+		{"pv_player", versionCode},
 		{"compliance_status", "0"},
 		{"need_personal_recommend", "1"},
 		{"player_so_load", "1"},
@@ -208,6 +215,74 @@ func SignedVideoTabPairs(id SearchIdentity, videoID string) [][2]string {
 		[2]string{"need_all_video_definition", "true"},
 	)
 	return pairs
+}
+
+// SignedVideoTabMultiPairs is the ordered video_tab multi model query.
+// The business fields are the shipped client's GetVideoModelRequest
+// (shared by the singular and multi tab reads): video_id_type 0 is the
+// episode id type, device_level 1, video_platform 1024. The channel
+// presents the TabVersion profile.
+// playbackDevicePairs is the device pair set the current client
+// generation puts on playback requests: the device fields in device
+// order, then device_id / iid / cdid, and no openudid.
+func playbackDevicePairs(id SearchIdentity, versionCode, versionName string) [][2]string {
+	d := id.Device.OrDefault()
+	kind, pad := "phone", "0"
+	if d.Pad {
+		kind, pad = "pad", "1"
+	}
+	return [][2]string{
+		{"ac", "wifi"},
+		{"channel", d.Channel},
+		{"aid", AID},
+		{"app_name", AppName},
+		{"version_code", versionCode},
+		{"version_name", versionName},
+		{"device_platform", DevicePlatform},
+		{"os", "android"},
+		{"ssmix", "a"},
+		{"device_type", d.Model},
+		{"device_brand", d.Brand},
+		{"language", "zh"},
+		{"os_api", strconv.Itoa(d.OSAPI)},
+		{"os_version", d.OSVersion},
+		{"manifest_version_code", versionCode},
+		{"resolution", d.Resolution},
+		{"dpi", strconv.Itoa(d.DPI)},
+		{"update_version_code", versionCode},
+		{"host_abi", "arm64-v8a"},
+		{"dragon_device_type", kind},
+		{"pv_player", versionCode},
+		{"compliance_status", "0"},
+		{"need_personal_recommend", "1"},
+		{"player_so_load", "1"},
+		{"is_android_pad_screen", pad},
+		{"device_id", id.DeviceID},
+		{"iid", id.InstallID},
+		{"cdid", id.CDID},
+	}
+}
+
+func SignedVideoTabMultiPairs(id SearchIdentity, videoID string) [][2]string {
+	pairs := playbackDevicePairs(id, TabVersionCode, TabVersionName)
+	pairs = append(pairs,
+		[2]string{"video_id", videoID},
+		[2]string{"video_id_type", "0"},
+		[2]string{"device_level", "1"},
+		[2]string{"need_all_video_definition", "1"},
+		[2]string{"need_mp4_align", "0"},
+		[2]string{"use_os_player", "0"},
+		[2]string{"video_platform", "1024"},
+		[2]string{"source", "0"},
+		[2]string{"from_video_id", ""},
+	)
+	return pairs
+}
+
+// PlaybackMultiPairs is the ordered player multi model query, under the
+// PlaybackVersion profile.
+func PlaybackMultiPairs(id SearchIdentity) [][2]string {
+	return playbackDevicePairs(id, PlaybackVersionCode, PlaybackVersionName)
 }
 
 // SignedAudioPlayInfoPairs is the ordered audiobook playinfo query.
@@ -626,6 +701,28 @@ func PlaybackBody(episodeID string) ([]byte, error) {
 			"video_id_type":             0,
 			"need_all_video_definition": true,
 			"video_platform":            3,
+		},
+	})
+}
+
+// MultiPlaybackBody is the seriessdk GetVideoModelRequest for the player
+// multi channel: one episode under content type 1004, with the full
+// biz_param block the shipped client sends (device_level 3,
+// video_platform 1024).
+func MultiPlaybackBody(episodeID string) ([]byte, error) {
+	return jsonMarshal(map[string]any{
+		"biz_param": map[string]any{
+			"detail_page_version":       0,
+			"device_level":              3,
+			"disable_digg_stat":         false,
+			"need_all_video_definition": true,
+			"need_mp4_align":            false,
+			"use_os_player":             false,
+			"use_server_dns":            false,
+			"video_platform":            1024,
+		},
+		"mixed_video_id_map": map[string]any{
+			"1004": []string{episodeID},
 		},
 	})
 }

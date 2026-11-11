@@ -60,14 +60,14 @@ func registerHeader(p RegisterIdentity, now time.Time) map[string]any {
 	d := p.Device.OrDefault()
 	return map[string]any{
 		"display_name":          "红果免费短剧",
-		"update_version_code":   73932,
-		"manifest_version_code": 73932,
+		"update_version_code":   74516,
+		"manifest_version_code": 74516,
 		"app_version_minor":     VersionName,
 		"aid":                   8662,
 		"channel":               d.Channel,
 		"package":               Package,
 		"app_version":           VersionName,
-		"version_code":          73932,
+		"version_code":          74516,
 		"os":                    "Android",
 		"os_version":            d.OSVersion,
 		"os_api":                d.OSAPI,

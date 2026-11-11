@@ -1,0 +1,41 @@
+name: liveprobe
+on:
+  push:
+    branches: [liveprobe]
+  workflow_dispatch:
+permissions:
+  contents: write
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.23'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: Fork live probe
+        run: |
+          set +e
+          go run ./cmd/liveprobe 7699003626647194649 > fork-result.txt 2>&1
+          echo "exit=$?" >> fork-result.txt
+          cat fork-result.txt
+      - name: Reference live probe
+        working-directory: refdiag
+        run: |
+          set +e
+          npm install --no-audit --no-fund > npm.log 2>&1
+          node run.cjs 7699003626647194649 > ref-result.txt 2>&1
+          echo "exit=$?" >> ref-result.txt
+          cat ref-result.txt
+      - name: Commit results
+        run: |
+          cp refdiag/ref-result.txt ref-result.txt 2>/dev/null || true
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add fork-result.txt ref-result.txt
+          git commit -m "liveprobe results" || echo "nothing to commit"
+          git push origin liveprobe || echo "push failed"

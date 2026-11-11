@@ -31,6 +31,8 @@ const (
 // Client 也可以并发使用。
 type Client struct {
 	guestMu        sync.Mutex
+	playbackMu     sync.Mutex
+	playbackProf   *DeviceProfile
 	transport      Transport
 	profileStore   ProfileStore
 	signer         Signer

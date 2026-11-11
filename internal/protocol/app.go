@@ -1,11 +1,11 @@
 package protocol
 
-// Public application constants observed on com.phoenix.read 7.3.9.32.
+// Public application constants observed on com.phoenix.read 7.4.5.16.
 // They are app identity, not a copied device credential.
 const (
 	Package        = "com.phoenix.read"
-	VersionName    = "7.3.9.32"
-	VersionCode    = "73932"
+	VersionName    = "7.4.5.16"
+	VersionCode    = "74516"
 	AID            = "8662"
 	AppName        = "novelread"
 	DevicePlatform = "android"
@@ -14,6 +14,18 @@ const (
 	// /novel/ request to (1508 of 1508, 2026-10-24). reading.snssdk.com
 	// answers the same reads but 404s the distribution and activity families.
 	APIHost = "api5-normal-sinfonlinea.fqnovel.com"
+	// APIHostB is the alternate API host the shipped client also uses;
+	// the multi playback endpoints were observed answering there
+	// (2026-11-10).
+	APIHostB = "api5-normal-sinfonlineb.fqnovel.com"
+	// The multi playback channels keep the per-channel version profiles
+	// the shipped client generations used when they were introduced:
+	// the player multi channel presents 7.4.3.32, the video_tab multi
+	// channel 7.3.9.32, while the app as a whole presents VersionName.
+	PlaybackVersionName = "7.4.3.32"
+	PlaybackVersionCode = "74332"
+	TabVersionName      = "7.3.9.32"
+	TabVersionCode      = "73932"
 	// RegisterHost is where the captured client registers its device
 	// (2026-10-24). UrlConfig.CHINA's log.snssdk.com registers devices the
 	// same way.
@@ -27,6 +39,16 @@ const (
 	// player scene; observed 2026-10-24).
 	PathSeriesBatch = "/novel/player/multi_video_detail/player/v1"
 	PathPlayback    = "/novel/player/video_model/v1/"
+	// PathPlaybackMulti is the player channel's batch model read
+	// (seriessdk mGetVideoModel; one episode per call here). Since
+	// 2026-11-10 it is the player-side issuance path that still answers
+	// anonymous requests; the singular read returns empty.
+	PathPlaybackMulti = "/novel/player/multi_video_model/v1/"
+	// PathVideoTabMulti is the reading-side batch model read
+	// (BookApiService.mGetVideoModel, added in the 7.4.x client
+	// generation); it shares GetVideoModelRequest with the singular
+	// tab read.
+	PathVideoTabMulti = "/reading/bookapi/video_tab/multi_video_model/v1/"
 	// PathAudioPlayInfo is the audiobook chapter model read
 	// (reader-side, guest-issued per chapter; verified 2026-11-06).
 	PathAudioPlayInfo = "/reading/reader/audio/playinfo/"
@@ -78,6 +100,9 @@ const (
 	DefaultRankActivity = "hongguo_actor_fans_ranklist_activity"
 	DefaultRankList     = "hongguo_actor_fans_ranklist"
 	PathRegister        = "/service/2/device_register/"
+	// RegisterHostLF is the registration host the current client
+	// generation uses for playback identities (log5-applog-lf).
+	RegisterHostLF = "log5-applog-lf.fqnovel.com"
 
 	SearchTabShortPlay = "11"
 	// Search tabs filled by an anonymous search response.

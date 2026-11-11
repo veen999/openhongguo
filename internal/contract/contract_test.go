@@ -98,6 +98,8 @@ func (f *fixtureTransport) Do(_ context.Context, req *sdk.Request) (*sdk.Respons
 		protocol.PathSearch:          "search-response.json",
 		protocol.PathSeries:          "series-response.json",
 		protocol.PathPlayback:        "clear-playback.json",
+		protocol.PathPlaybackMulti:   "clear-playback.json",
+		protocol.PathVideoTabMulti:   "clear-playback.json",
 		protocol.PathSuggest:         "suggest-response.json",
 		protocol.PathCue:             "cue-response.json",
 		protocol.PathCategory:        "category-front.json",

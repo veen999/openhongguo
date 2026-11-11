@@ -16,20 +16,6 @@ openhongguo 是红果短剧（Hongguo）的非官方 SDK，提供 Go、Node.js�
 
 SDK 用匿名设备发送所有请求，不需要登录。Go 以外的 SDK 都由 Go SDK 编译而成，所以各语言的行为相同。
 
-## 关于本 fork
-
-**本仓库是 [beilunyang/openhongguo](https://github.com/beilunyang/openhongguo) 的 fork**（基线为 upstream v0.2.0），由红果短剧 Android 客户端（`com.hongguo.app`）项目维护，为 upstream 未覆盖的能力做扩展。除下面列出的改动外，其余接口、行为与文档均与 upstream 一致，本 README 的其余部分保留 upstream 原文与署名；每项改动的实现细节见 [README-FORK.md](README-FORK.md)。
-
-相对 upstream 的变更：
-
-| 类别 | 内容 |
-|---|---|
-| 新增接口 | `CommentList`：官方评论/弹幕（同一数据流按 30 秒时间窗分页；匿名采样返回） |
-| 新增接口 | `AudioPlayback` / `ToneInfo`：有声书逐章音频模型与音色/关联小说信息（音频与短剧同构的 CENC 加密） |
-| 新增接口 | `ChapterContent`：小说正文（registerkey 内容密钥注册 + 解密 + 解压；未解锁章节返回 `ErrContentLocked`） |
-| 行为变更 | `ResolvePlayback` 改为双通道：先走 `video_tab` 取模通道（配额与原 POST 试看通道独立），失败回退 upstream 原通道 |
-| 解析补全 | 列表项的热度/评分/标签/播放量/平台字段、分类落地页的章数/整本价格/关联有声书 id（upstream 解析会丢弃这些字段） |
-
 > **免责声明**
 >
 > 请以学习为目的使用本仓库。
@@ -206,6 +192,7 @@ case err != nil:
 | `ErrTransport` | `TRANSPORT` | 网络请求失败 | 是 |
 | `ErrSignatureRejected` | `SIGNATURE_REJECTED` | 服务端拒绝了请求的签名 | 否 |
 | `ErrContentUnavailable` | `CONTENT_UNAVAILABLE` | 内容已下架、不存在，或当前调用方无权访问 | 否 |
+| `ErrContentLocked` | `CONTENT_LOCKED` | 章节正文对当前身份未解锁：内容键未注册成功，或该章节属于付费/VIP 内容，匿名身份读不到 | 否 |
 | `ErrParamInvalid` | `PARAM_INVALID` | 服务端认为请求参数无效 | 否 |
 | `ErrChallengeRequired` | `CHALLENGE_REQUIRED` | 服务端要求验证码或其他验证，匿名客户端无法继续 | 否 |
 | `ErrDeviceRejected` | `DEVICE_REJECTED` | 匿名设备被拒绝，需要重置设备后重新注册 | 否 |
@@ -351,6 +338,20 @@ type Transport interface {
 | `Person` | `person(userId)` | 加载一位演员或一个角色的主页 |
 | `PersonWorks` | `personWorks(userId, cursor)` | 加载一位演员参演的短剧，一次一页（主页上的作品 › 剧作） |
 
+### 评论与弹幕
+
+| Go | 其他语言 | 作用 |
+|---|---|---|
+| `CommentList` | `commentList(episodeId, seriesId, options)` | 加载一集的评论与弹幕，一次一个时间窗口 |
+
+### 小说与听书
+
+| Go | 其他语言 | 作用 |
+|---|---|---|
+| `AudioPlayback` | `audioPlayback(bookId, itemId, toneId)` | 加载一章有声书的播放模型，形状与 ResolvePlayback 相同：各码流的地址、编码、大小 |
+| `ToneInfo` | `toneInfo(bookId)` | 查询一本书的音色信息：是否有可播音色，以及本书若是有声书时对应的小说 book_id |
+| `ChapterContent` | `chapterContent(bookId, itemId)` | 读取一章小说正文并解密 |
+
 ### 播放与设备
 
 | Go | 其他语言 | 作用 |
@@ -358,20 +359,6 @@ type Transport interface {
 | `ResolvePlayback` | `resolvePlayback(episodeId)` | 加载一集的播放模型：各清晰度的地址、编码和码率 |
 | `ContentKey` | 并入 `resolvePlayback` 的结果 | 从播放模型算出加密分集的内容密钥 |
 | `ResetDevice` | `resetDevice()` | 丢弃当前匿名设备，并注册一台新设备 |
-
-### 评论与弹幕（fork 新增）
-
-| Go | 其他语言 | 作用 |
-|---|---|---|
-| `CommentList` | `commentList(episodeId, seriesId, options)` | 加载一集的评论与弹幕，一次一个时间窗口 |
-
-### 听书与小说（fork 新增）
-
-| Go | 其他语言 | 作用 |
-|---|---|---|
-| `AudioPlayback` | `audioPlayback(bookId, itemId, toneId)` | 加载有声书一章的音频模型（须逐章调用），与短剧共用播放模型与内容密钥 |
-| `ToneInfo` | `toneInfo(bookId)` | 加载一本书的音色列表与关联小说 id |
-| `ChapterContent` | `chapterContent(bookId, itemId)` | 加载小说一章的正文（已解密、已解压）；未解锁章节返回 `ErrContentLocked` |
 <!-- /gen:methods-go -->
 
 ## 命令行演示
