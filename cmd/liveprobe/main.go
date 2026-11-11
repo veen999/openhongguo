@@ -9,6 +9,7 @@ import (
 	"os"
 	"time"
 
+	"github.com/beilunyang/openhongguo/adapters/httptransport"
 	"github.com/beilunyang/openhongguo/adapters/memstore"
 	"github.com/beilunyang/openhongguo/sdk"
 )
@@ -18,7 +19,7 @@ func main() {
 	if len(os.Args) > 1 {
 		vid = os.Args[1]
 	}
-	client, err := sdk.NewClient(sdk.Options{ProfileStore: memstore.New()})
+	client, err := sdk.NewClient(sdk.Options{Transport: httptransport.New(), ProfileStore: memstore.New()})
 	if err != nil {
 		fmt.Println("CLIENT ERROR:", err)
 		os.Exit(1)
