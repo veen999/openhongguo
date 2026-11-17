@@ -44,6 +44,13 @@ const (
 	// 2026-11-10 it is the player-side issuance path that still answers
 	// anonymous requests; the singular read returns empty.
 	PathPlaybackMulti = "/novel/player/multi_video_model/v1/"
+	// PathPlaybackMobileV5 is the mobile v5 playback model read the
+	// official client (metasec v04.10.03) switched to on 2026-11-16,
+	// when the platform retired the previous playback chains: POST,
+	// gzipped body, signed with only x-khronos / x-helios / x-medusa
+	// under the v5 tables (see sign.SignPlaybackV5). The model sits at
+	// data["1004"][episode].video_model in the response.
+	PathPlaybackMobileV5 = "/novel/player/multi_video_model/player/v1"
 	// PathPlaybackMultiV2Fmt is the seriessdk V2 batch model read: the
 	// dr_scene rides in the path (and again in the body's dr_scene).
 	PathPlaybackMultiV2Fmt = "/novel/player/multi_video_model/%s/v1/"

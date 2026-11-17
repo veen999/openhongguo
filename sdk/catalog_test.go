@@ -74,6 +74,7 @@ func happyHandler(t *testing.T, seen *[]captured) http.Handler {
 		protocol.PathSearch:        "search-response.json",
 		protocol.PathSeries:        "series-response.json",
 		protocol.PathPlayback:      "drm-playback.json",
+		protocol.PathPlaybackMobileV5: "drm-playback-v5.json",
 		protocol.PathPlaybackMulti: "drm-playback.json",
 		fmt.Sprintf(protocol.PathPlaybackMultiV2Fmt, "default"): "drm-playback.json",
 		protocol.PathVideoTabMulti: "drm-playback.json",
@@ -480,6 +481,24 @@ func assertAnonymousWire(t *testing.T, seen []captured) {
 			}
 			if hit.Header.Get("x-gorgon") == "" {
 				t.Fatal("tab multi signature missing")
+			}
+		case protocol.PathPlaybackMobileV5:
+			played = true
+			if hit.Method != http.MethodPost {
+				t.Fatalf("mobile v5 method %s", hit.Method)
+			}
+			if hit.Header.Get("Content-Encoding") != "gzip" {
+				t.Fatal("mobile v5 body is not gzipped")
+			}
+			if hit.Header.Get("x-medusa") == "" || hit.Header.Get("x-khronos") == "" || hit.Header.Get("x-helios") == "" || hit.Header.Get("x-ss-stub") == "" {
+				t.Fatal("mobile v5 signature missing")
+			}
+			if hit.Header.Get("x-argus") != "" || hit.Header.Get("x-ladon") != "" || hit.Header.Get("x-gorgon") != "" {
+				t.Fatal("mobile v5 carries retired signature headers")
+			}
+			q, _ := url.ParseQuery(hit.RawQuery)
+			if q.Get("version_code") != "74332" || q.Get("device_id") == "" {
+				t.Fatalf("mobile v5 query = %s", hit.RawQuery)
 			}
 		case protocol.PathVideoTabModel:
 			// Singular tab fallback probe; the fixture server 404s it and

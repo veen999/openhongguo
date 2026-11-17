@@ -41,7 +41,7 @@ func (s *devicePerRequest) handler(t *testing.T) http.Handler {
 			s.registers++
 			w.Header().Add("Set-Cookie", "ttreq=fixture-ticket; Path=/")
 			_, _ = w.Write(reg)
-		case protocol.PathPlayback, protocol.PathPlaybackMulti, fmt.Sprintf(protocol.PathPlaybackMultiV2Fmt, "default"), protocol.PathVideoTabMulti, protocol.PathVideoTabModel:
+		case protocol.PathPlayback, protocol.PathPlaybackMobileV5, protocol.PathPlaybackMulti, fmt.Sprintf(protocol.PathPlaybackMultiV2Fmt, "default"), protocol.PathVideoTabMulti, protocol.PathVideoTabModel:
 			s.playbacks++
 			if s.registers <= s.emptyFor {
 				return
@@ -107,7 +107,7 @@ func TestEmptyPlaybackMovesToFreshDevice(t *testing.T) {
 
 func TestEmptyPlaybackGivesUpAfterDefaultResets(t *testing.T) {
 	// 全部通道恒空：每轮 = 播放身份 2 次注册（首注 + 丢弃重注）+
-	// 目录游客 1 次注册，播放请求 7 次（player 单集 + multi×2 +
+	// 目录游客 1 次注册，播放请求 8 次（v5 + player 单集 + multi×2 +
 	// tab-multi + tab-multi 重试 + tab 单集 + player 单集收尾）；
 	// withFreshDevice 默认 2 次重置共 3 轮（注册跨轮复用，合计 7 次）。
 	s := &devicePerRequest{emptyFor: 99}
@@ -116,7 +116,7 @@ func TestEmptyPlaybackGivesUpAfterDefaultResets(t *testing.T) {
 	if !errors.Is(err, sdk.ErrAnonymousLimited) {
 		t.Fatalf("err = %v", err)
 	}
-	if s.registers != 7 || s.playbacks != 21 {
+	if s.registers != 7 || s.playbacks != 24 {
 		t.Fatalf("registers = %d playbacks = %d", s.registers, s.playbacks)
 	}
 }

@@ -58,10 +58,19 @@ func (c *Client) ResolvePlayback(ctx context.Context, episodeID string, _ Playba
 		// on the stored catalog guest stay as final fallbacks.
 		// A channel that produced a model (err may be ErrDRMProtected)
 		// ends the chain; empty answers fall through.
-		// The singular player POST with real Argus/Ladon signing goes
-		// first: it is the channel the service restored on 2026-11-10
-		// (see resolvePlaybackViaPlayer). The multi channels stay as
-		// fallbacks.
+		// The mobile v5 channel goes first: on 2026-11-16 the
+		// platform retired every previous playback chain (all of them
+		// answer empty for every identity now), and the official
+		// client's v04.10.03 protocol — POST multi_video_model/
+		// player/v1, gzipped body, khronos/helios/medusa-v5 signing —
+		// is the chain that issues (see resolvePlaybackViaMobileV5).
+		// The older channels stay behind it as fallbacks in case the
+		// platform rolls back.
+		if pb, err := c.playbackIdentity(ctx); err == nil {
+			if playback, err := c.resolvePlaybackViaMobileV5(ctx, pb, episodeID); playback != nil {
+				return playback, err
+			}
+		}
 		if playback, err := c.resolvePlaybackViaPlayer(ctx, episodeID); playback != nil {
 			return playback, err
 		}
@@ -87,6 +96,107 @@ func (c *Client) ResolvePlayback(ctx context.Context, episodeID string, _ Playba
 		}
 		return c.resolvePlaybackViaPlayer(ctx, episodeID)
 	})
+}
+
+// mobileV5UA is the User-Agent the v5 playback request carries: the
+// official 7.3.9.32 client on the PGT-AN10 profile the v5 query
+// presents (the query itself pins 7.4.3.32; the mismatch is the
+// published protocol's own and is kept verbatim).
+const mobileV5UA = "com.phoenix.read/73932 (Linux; U; Android 12; zh_CN_#Hans; PGT-AN10; Build/V417IR;tt-ok/3.12.13.20)"
+
+// resolvePlaybackViaMobileV5 fetches the playback model through the
+// mobile v5 channel: POST /novel/player/multi_video_model/player/v1
+// on the A host, gzipped body, the reduced official-mobile query
+// profile (7.4.3.32 / vivo_8662_64 / PGT-AN10) carrying only the
+// playback identity's device_id / iid / cdid, signed with
+// sign.SignPlaybackV5 (x-khronos / x-helios / x-medusa only — the old
+// signature headers are forgery markers under v5). No cookie rides
+// along. The model sits at data["1004"][episode].video_model.
+func (c *Client) resolvePlaybackViaMobileV5(ctx context.Context, p *DeviceProfile, episodeID string) (*model.Playback, error) {
+	body := []byte(fmt.Sprintf(`{"biz_param":{"detail_page_version":0,"device_level":1,"disable_digg_stat":false,"disable_video_relate_book":false,"need_all_video_definition":true,"need_mp4_align":false,"use_os_player":false,"use_server_dns":false,"video_platform":1024},"mixed_video_id_map":{"1004":["%s"]},"dr_scene":"player"}`, episodeID))
+	gz, err := gzipBytes(body)
+	if err != nil {
+		return nil, err
+	}
+	pairs := [][2]string{
+		{"aid", protocol.AID},
+		{"app_name", "novelread"},
+		{"version_code", "74332"},
+		{"version_name", "7.4.3.32"},
+		{"channel", "vivo_8662_64"},
+		{"device_platform", "android"},
+		{"device_type", "PGT-AN10"},
+		{"os_version", "12"},
+		{"update_version_code", "74332"},
+		{"iid", p.InstallID},
+		{"cdid", p.CDID},
+		{"device_id", p.DeviceID},
+	}
+	ticket := c.clock().UnixMilli()
+	rawQuery, headers := sign.SignPlaybackV5(pairs, ticket, sign.V5Identity{
+		DeviceID:    p.DeviceID,
+		VersionName: "7.4.3.32",
+		Channel:     "vivo_8662_64",
+		OSVersion:   "12",
+		DeviceType:  "PGT-AN10",
+	}, gz, nil)
+	h := make(map[string]string, len(headers)+3)
+	for k, v := range headers {
+		h[k] = v
+	}
+	h["User-Agent"] = mobileV5UA
+	h["Accept"] = "application/json"
+	h["Content-Encoding"] = "gzip"
+	raw, _, err := c.doRaw(ctx, "POST", c.apiOrigin+protocol.PathPlaybackMobileV5+"?"+rawQuery, h, gz)
+	if err != nil {
+		return nil, err
+	}
+	return finishMobileV5Playback(raw, episodeID)
+}
+
+// finishMobileV5Playback parses a v5-channel response: the model sits
+// under data["1004"][<episode>].video_model (an object or a JSON
+// string); some responses flatten the id map directly under data.
+func finishMobileV5Playback(raw []byte, episodeID string) (*model.Playback, error) {
+	var probe struct {
+		Data map[string]json.RawMessage `json:"data"`
+	}
+	if err := json.Unmarshal(raw, &probe); err != nil {
+		return nil, err
+	}
+	entries := probe.Data
+	if bucket, ok := probe.Data["1004"]; ok {
+		var byID map[string]json.RawMessage
+		if err := json.Unmarshal(bucket, &byID); err != nil {
+			return nil, err
+		}
+		entries = byID
+	}
+	entry, ok := entries[episodeID]
+	if !ok || len(entry) == 0 {
+		return nil, fmt.Errorf("mobile v5 playback response has no entry for episode %s", episodeID)
+	}
+	var holder struct {
+		VideoModel json.RawMessage `json:"video_model"`
+	}
+	if err := json.Unmarshal(entry, &holder); err != nil {
+		return nil, err
+	}
+	if len(holder.VideoModel) == 0 {
+		return nil, fmt.Errorf("mobile v5 playback response has no model for episode %s", episodeID)
+	}
+	wrapped := make([]byte, 0, len(holder.VideoModel)+40)
+	wrapped = append(wrapped, `{"code":0,"data":{"video_model":`...)
+	wrapped = append(wrapped, holder.VideoModel...)
+	wrapped = append(wrapped, `}}`...)
+	playback, err := protocol.ParsePlayback(wrapped, episodeID)
+	if err != nil {
+		return nil, err
+	}
+	if playback.Protected {
+		return playback, ErrDRMProtected
+	}
+	return playback, nil
 }
 
 // playbackHeaders builds the header set for the multi playback

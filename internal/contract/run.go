@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"compress/gzip"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -325,7 +326,9 @@ func playSeries(ctx context.Context, client *sdk.Client, rec *recorder, cfg Conf
 	}
 
 	rec.forget(protocol.PathPlayback)
+	rec.forget(protocol.PathPlaybackMobileV5)
 	pb, err := client.ResolvePlayback(ctx, page.Items[0].ID, sdk.PlaybackOptions{})
+	rec.adoptV5Playback()
 	if errors.Is(err, sdk.ErrDRMProtected) && pb != nil {
 		err = nil
 	}
@@ -464,6 +467,67 @@ func (r *recorder) forget(path string) {
 	r.mu.Lock()
 	delete(r.bodies, path)
 	r.mu.Unlock()
+}
+
+// adoptV5Playback rewrites a recorded mobile-v5 playback response
+// into the singular envelope under PathPlayback, so the playback
+// contract check compares the model's shape whichever channel issued
+// it. The v5 envelope keys the model by episode id under
+// data["1004"]; the model itself is the same object the singular
+// channel returns inside data.video_model.
+func (r *recorder) adoptV5Playback() {
+	body, ok := r.body(protocol.PathPlaybackMobileV5)
+	if !ok {
+		return
+	}
+	if _, ok := r.body(protocol.PathPlayback); ok {
+		return
+	}
+	var probe struct {
+		Data map[string]json.RawMessage `json:"data"`
+	}
+	if err := json.Unmarshal(body, &probe); err != nil {
+		return
+	}
+	entries := probe.Data
+	if bucket, ok := probe.Data["1004"]; ok {
+		var byID map[string]json.RawMessage
+		if err := json.Unmarshal(bucket, &byID); err != nil {
+			return
+		}
+		entries = byID
+	}
+	for _, entry := range entries {
+		var holder map[string]json.RawMessage
+		if err := json.Unmarshal(entry, &holder); err != nil || len(holder["video_model"]) == 0 {
+			continue
+		}
+		// Rebuild the singular envelope: the v5 root's own scalar
+		// fields ride along, and the episode entry's fields (the
+		// model plus its siblings, e.g. expire_time) become data.
+		root := map[string]json.RawMessage{}
+		var v5Root map[string]json.RawMessage
+		if err := json.Unmarshal(body, &v5Root); err == nil {
+			for k, v := range v5Root {
+				if k != "data" {
+					root[k] = v
+				}
+			}
+		}
+		data, err := json.Marshal(holder)
+		if err != nil {
+			return
+		}
+		root["data"] = data
+		wrapped, err := json.Marshal(root)
+		if err != nil {
+			return
+		}
+		r.mu.Lock()
+		r.bodies[protocol.PathPlayback] = wrapped
+		r.mu.Unlock()
+		return
+	}
 }
 
 // decode undoes the gzip content encoding the SDK also accepts.
