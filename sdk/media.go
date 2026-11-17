@@ -111,9 +111,16 @@ const mobileV5UA = "com.phoenix.read/73932 (Linux; U; Android 12; zh_CN_#Hans; P
 // playback identity's device_id / iid / cdid, signed with
 // sign.SignPlaybackV5 (x-khronos / x-helios / x-medusa only — the old
 // signature headers are forgery markers under v5). No cookie rides
-// along. The model sits at data["1004"][episode].video_model.
+// along. The model sits at data[<content type>][episode].video_model.
+//
+// mixed_video_id_map is keyed by the episode's content type: 1004 for
+// regular series (short plays and comics alike), 1001 for PUGC
+// episodes (UGC album entries). ResolvePlayback only receives an
+// episode id, so the id is filed under both keys in one request —
+// the server answers under the key that matches the episode and
+// ignores the other (verified live for both kinds).
 func (c *Client) resolvePlaybackViaMobileV5(ctx context.Context, p *DeviceProfile, episodeID string) (*model.Playback, error) {
-	body := []byte(fmt.Sprintf(`{"biz_param":{"detail_page_version":0,"device_level":1,"disable_digg_stat":false,"disable_video_relate_book":false,"need_all_video_definition":true,"need_mp4_align":false,"use_os_player":false,"use_server_dns":false,"video_platform":1024},"mixed_video_id_map":{"1004":["%s"]},"dr_scene":"player"}`, episodeID))
+	body := []byte(fmt.Sprintf(`{"biz_param":{"detail_page_version":0,"device_level":1,"disable_digg_stat":false,"disable_video_relate_book":false,"need_all_video_definition":true,"need_mp4_align":false,"use_os_player":false,"use_server_dns":false,"video_platform":1024},"mixed_video_id_map":{"1004":["%s"],"1001":["%s"]},"dr_scene":"player"}`, episodeID, episodeID))
 	gz, err := gzipBytes(body)
 	if err != nil {
 		return nil, err
@@ -155,8 +162,9 @@ func (c *Client) resolvePlaybackViaMobileV5(ctx context.Context, p *DeviceProfil
 }
 
 // finishMobileV5Playback parses a v5-channel response: the model sits
-// under data["1004"][<episode>].video_model (an object or a JSON
-// string); some responses flatten the id map directly under data.
+// under data[<content type>][<episode>].video_model (an object or a
+// JSON string), keyed 1004 for regular series and 1001 for PUGC
+// episodes; some responses flatten the id map directly under data.
 func finishMobileV5Playback(raw []byte, episodeID string) (*model.Playback, error) {
 	var probe struct {
 		Data map[string]json.RawMessage `json:"data"`
@@ -165,12 +173,19 @@ func finishMobileV5Playback(raw []byte, episodeID string) (*model.Playback, erro
 		return nil, err
 	}
 	entries := probe.Data
-	if bucket, ok := probe.Data["1004"]; ok {
+	for _, key := range []string{"1004", "1001"} {
+		bucket, ok := probe.Data[key]
+		if !ok {
+			continue
+		}
 		var byID map[string]json.RawMessage
 		if err := json.Unmarshal(bucket, &byID); err != nil {
 			return nil, err
 		}
-		entries = byID
+		if _, has := byID[episodeID]; has {
+			entries = byID
+			break
+		}
 	}
 	entry, ok := entries[episodeID]
 	if !ok || len(entry) == 0 {

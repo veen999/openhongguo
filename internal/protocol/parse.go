@@ -172,7 +172,18 @@ type catalogVideo struct {
 	RecTags           []subTitleItem `json:"rec_tags"`
 	RecText           string         `json:"rec_text"`
 	CategorySchema    flexCategories `json:"category_schema"`
-	VideoDetail       struct {
+	ContentType       int            `json:"content_type"`
+	// AlbumInfo 只在 UGC 合集格子里出现：这类结果没有 video_detail，
+	// 标题/封面/集数都在 album_info 里（content_type 1003）。
+	AlbumInfo struct {
+		ID           flexString `json:"album_id_str"`
+		NumericID    flexString `json:"album_id"`
+		Title        string     `json:"title"`
+		Intro        string     `json:"intro"`
+		Cover        string     `json:"cover"`
+		EpisodeCount int        `json:"episode_cnt"`
+	} `json:"album_info"`
+	VideoDetail struct {
 		Title          string            `json:"series_title"`
 		Intro          string            `json:"series_intro"`
 		Cover          string            `json:"series_cover"`
@@ -622,6 +633,39 @@ func ParseSearchTab(raw []byte, tabType int) (*CatalogPage, error) {
 		page.NextOffset = tab.NextOffset
 		for _, row := range tab.Data {
 			for _, v := range row.VideoData {
+				// UGC 合集格子（show_type 532）：没有 video_detail，
+				// 标题/封面/集数在 album_info 里。此前这类格子被静默丢弃，
+				// 于是《我的妹妹不可爱》这类合集在搜索里永远排不出来——
+				// 服务端其实把它们放在结果最前面。只在本格子没有自带
+				// 剧目载荷时才走合集分支，多季正剧仍走下面的 video_detail。
+				aid := v.AlbumInfo.ID.String()
+				if aid == "" {
+					aid = v.AlbumInfo.NumericID.String()
+				}
+				if aid != "" && strings.TrimSpace(v.VideoDetail.Title) == "" && len(v.VideoDetail.Cards) == 0 {
+					atitle := strings.TrimSpace(v.AlbumInfo.Title)
+					if atitle == "" {
+						atitle = strings.TrimSpace(v.Title)
+					}
+					if atitle != "" {
+						albumItem := model.SeriesSummary{
+							ID: aid, Title: atitle, Description: v.AlbumInfo.Intro,
+							CoverURL: v.AlbumInfo.Cover, EpisodeCount: v.AlbumInfo.EpisodeCount,
+						}
+						if albumItem.Description == "" {
+							albumItem.Description = v.VideoDesc
+						}
+						if albumItem.CoverURL == "" {
+							albumItem.CoverURL = v.Cover
+						}
+						enrichSummary(&albumItem, v)
+						// 合集是视频内容；video_platform 字段缺失会让
+						// App 把它误判成小说，这里按 UGC 视频归类。
+						albumItem.Platform = int(model.PlatformUGCVideo)
+						page.Items = append(page.Items, albumItem)
+						continue
+					}
+				}
 				// Series cards carry video_detail.series_title. Query and
 				// discussion cells reuse title without that field.
 				// The 视频 tab nests the series title under video_detail_list.
@@ -923,8 +967,10 @@ func parseSeriesPayload(payload wireSeriesPayload) (*model.Series, []model.Episo
 // The wire value is the shipped client's TTVideoEngine model: a JSON string at
 // data.video_model whose video_list holds one object per representation.
 // A representation is marked protected when it carries encrypt_info,
-// gear_des_key, spade_a, kid, check_info, encryption_method, or encrypt=true.
-// Keys and per-segment check data are used only to set Protected; they are
+// spade_a, kid, encryption_method, or encrypt=true. gear_des_key (a gear
+// descriptor string) and check_info (a byte-range checksum) also ride
+// on plain, unencrypted PUGC representations, so they never mark a
+// stream on their own. Keys are used only to set Protected; they are
 // never copied into the returned model.
 func ParsePlayback(raw []byte, episodeID string) (*model.Playback, error) {
 	var env struct {
@@ -1152,15 +1198,16 @@ func (it playbackItem) protection() (bool, string) {
 		// A non-object marker such as "protected" still marks the stream.
 		return true, method
 	}
-	if it.GearDESKey != "" || it.SpadeA != "" || it.Kid != "" || method != "" {
+	if it.SpadeA != "" || it.Kid != "" || method != "" {
 		return true, method
 	}
 	if jsonTruthy(it.Encrypt) {
 		return true, method
 	}
-	if len(nonEmptyJSON(it.CheckInfo)) > 0 {
-		return true, method
-	}
+	// gear_des_key and check_info are NOT consulted: both also appear
+	// on unencrypted PUGC representations (verified live — plain hvc1
+	// MP4, no tenc/pssh), where they caused false Protected markings
+	// with no key material to decrypt with.
 	return false, method
 }
 
@@ -1392,6 +1439,97 @@ func ParseAlbum(raw []byte, albumID string) (*model.Album, error) {
 		out.SeasonCount = len(seasons)
 	}
 	return out, nil
+}
+
+// ParseAlbumUGC 解析 UGC 合集的 album_detail 响应（与多季合集是同一个
+// 接口、不同形态）：album_data 用 title/intro/cover，video_detail_list
+// 里每项是一集单集 PUGC 剧（series_id 即该集 vid，content_type 1001）。
+// 多季形态走 ParseAlbum；本函数只认 UGC 形态，认不出时返回错误。
+func ParseAlbumUGC(raw []byte, albumID string) (*model.Album, []model.Episode, error) {
+	var env struct {
+		Code    flexString `json:"code"`
+		Message string     `json:"message"`
+		Data    struct {
+			AlbumData json.RawMessage `json:"album_data"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(raw, &env); err != nil {
+		return nil, nil, err
+	}
+	if env.Code.String() != "" && env.Code.String() != "0" {
+		return nil, nil, fmt.Errorf("album unavailable: %s (%s)", strings.TrimSpace(env.Message), env.Code.String())
+	}
+	body, err := playbackObject(env.Data.AlbumData)
+	if err != nil {
+		return nil, nil, err
+	}
+	var album struct {
+		ID           flexString `json:"album_id_str"`
+		NumericID    flexString `json:"album_id"`
+		Title        string     `json:"title"`
+		Intro        string     `json:"intro"`
+		Cover        string     `json:"cover"`
+		EpisodeCount int        `json:"episode_cnt"`
+		List         []struct {
+			ID          flexString `json:"series_id_str"`
+			NumericID   flexString `json:"series_id"`
+			Title       string     `json:"series_title"`
+			Cover       string     `json:"series_cover"`
+			Duration    flexInt64  `json:"duration"`
+			ContentType int        `json:"content_type"`
+			VideoList   []struct {
+				Vid         flexString `json:"vid"`
+				DisablePlay bool       `json:"disable_play"`
+				Vertical    bool       `json:"vertical"`
+			} `json:"video_list"`
+		} `json:"video_detail_list"`
+	}
+	if err := json.Unmarshal(body, &album); err != nil {
+		return nil, nil, fmt.Errorf("ugc album model is not JSON: %w", err)
+	}
+	id := album.ID.String()
+	if id == "" {
+		id = album.NumericID.String()
+	}
+	if id == "" {
+		id = albumID
+	}
+	if album.Title == "" || len(album.List) == 0 {
+		return nil, nil, fmt.Errorf("not a UGC album response")
+	}
+	out := &model.Album{
+		ID: id, Title: album.Title, Description: album.Intro, CoverURL: album.Cover,
+		CoverExpiresAt: URLLifetime(album.Cover),
+	}
+	episodes := make([]model.Episode, 0, len(album.List))
+	for i, row := range album.List {
+		vid := ""
+		playable := true
+		vertical := false
+		if len(row.VideoList) > 0 {
+			vid = row.VideoList[0].Vid.String()
+			playable = !row.VideoList[0].DisablePlay
+			vertical = row.VideoList[0].Vertical
+		}
+		if vid == "" {
+			vid = row.ID.String()
+		}
+		if vid == "" {
+			vid = row.NumericID.String()
+		}
+		if vid == "" {
+			continue
+		}
+		ep := model.Episode{
+			ID: vid, SeriesID: id, Number: i + 1, Title: row.Title,
+			Duration: time.Duration(row.Duration) * time.Second,
+			Playable: playable, Vertical: vertical,
+			CoverURL: row.Cover, CoverExpiresAt: URLLifetime(row.Cover),
+			ContentType: model.ContentType(row.ContentType),
+		}
+		episodes = append(episodes, ep)
+	}
+	return out, episodes, nil
 }
 
 // ParseRankRows reads the ranked rows of a bookmall ranking cell.

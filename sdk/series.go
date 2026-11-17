@@ -119,11 +119,62 @@ func (c *Client) seriesDetail(ctx context.Context, seriesID string) (*model.Seri
 	if err != nil {
 		return nil, nil, err
 	}
-	return protocol.ParseSeries(raw)
+	series, episodes, err := protocol.ParseSeries(raw)
+	if err != nil || series == nil {
+		return series, episodes, err
+	}
+	// UGC 合集（content_type 1003）：video_detail 只回一个空壳
+	// （episode_cnt=0、无分集），真正的分集在 album_detail 里，
+	// 每项是一集单集 PUGC 剧。这里把分集并回来，让 GetSeries /
+	// ListEpisodes 对合集和普通剧表现一致；合集专属请求失败时
+	// 保持原样返回空壳，不连累普通详情。
+	if series.ContentType == model.ContentAlbum && len(episodes) == 0 {
+		if araw, aerr := c.albumRaw(ctx, seriesID); aerr == nil {
+			if album, aeps, perr := protocol.ParseAlbumUGC(araw, seriesID); perr == nil && len(aeps) > 0 {
+				episodes = aeps
+				if series.EpisodeCount == 0 {
+					series.EpisodeCount = len(aeps)
+				}
+				if series.Platform == model.PlatformUnknown {
+					series.Platform = model.PlatformUGCVideo
+				}
+				if series.CoverURL == "" {
+					series.CoverURL = album.CoverURL
+				}
+				if series.Description == "" {
+					series.Description = album.Description
+				}
+			}
+		}
+	}
+	return series, episodes, nil
 }
 
 // AlbumOptions 留作选择合集界面之用。
 type AlbumOptions struct{}
+
+// albumRaw 拉取 album_detail 接口的原始响应（多季合集与 UGC 合集
+// 共用同一接口、不同形态，分别由 ParseAlbum / ParseAlbumUGC 解析）。
+func (c *Client) albumRaw(ctx context.Context, albumID string) ([]byte, error) {
+	if !validID(albumID) {
+		return nil, fmt.Errorf("invalid album ID")
+	}
+	p, err := c.ensureSearchGuest(ctx)
+	if err != nil {
+		return nil, err
+	}
+	body, err := protocol.AlbumBody(albumID)
+	if err != nil {
+		return nil, err
+	}
+	ticket := c.clock().UnixMilli()
+	rawQuery, headers := sign.SignPOST(protocol.PathAlbum, protocol.DeviceQueryPairs(c.identity(p)), ticket, p.DeviceID, protocol.VersionName, body, nil)
+	raw, _, err := c.doRaw(ctx, "POST", c.apiOrigin+protocol.PathAlbum+"?"+rawQuery, anonymousHeaders(c, p, ticket, headers), body)
+	if err != nil {
+		return nil, err
+	}
+	return raw, nil
+}
 
 // GetAlbum 加载一个合集（多季合集）及其各季。
 //
@@ -131,20 +182,7 @@ type AlbumOptions struct{}
 // seriesIds 和 needVideoDetailInfo；响应列出该合集的各季。
 func (c *Client) GetAlbum(ctx context.Context, albumID string, _ AlbumOptions) (*model.Album, error) {
 	return withFreshDevice(ctx, c, false, func(ctx context.Context) (*model.Album, error) {
-		if !validID(albumID) {
-			return nil, fmt.Errorf("invalid album ID")
-		}
-		p, err := c.ensureSearchGuest(ctx)
-		if err != nil {
-			return nil, err
-		}
-		body, err := protocol.AlbumBody(albumID)
-		if err != nil {
-			return nil, err
-		}
-		ticket := c.clock().UnixMilli()
-		rawQuery, headers := sign.SignPOST(protocol.PathAlbum, protocol.DeviceQueryPairs(c.identity(p)), ticket, p.DeviceID, protocol.VersionName, body, nil)
-		raw, _, err := c.doRaw(ctx, "POST", c.apiOrigin+protocol.PathAlbum+"?"+rawQuery, anonymousHeaders(c, p, ticket, headers), body)
+		raw, err := c.albumRaw(ctx, albumID)
 		if err != nil {
 			return nil, err
 		}
