@@ -106,6 +106,7 @@ npm install openhongguo
 | 方法 | 作用 |
 |---|---|
 | `resolvePlayback(episodeId)` | 加载一集的播放模型：各清晰度的地址、编码和码率 |
+| `resolvePlaybackBatch(ids)` | 批量解析多集的播放模型 |
 | `resetDevice()` | 丢弃当前匿名设备，并注册一台新设备 |
 <!-- /gen:methods -->
 

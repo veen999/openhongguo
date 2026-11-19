@@ -35,6 +35,14 @@ data class PlaybackResult(
     val contentKeyError: OpenhongguoException? = null,
 )
 
+/** BatchPlaybackResult 是 resolvePlaybackBatch 的结果。 */
+data class BatchPlaybackResult(
+    /** 成功解析的集，按 episodeId 索引。 */
+    val results: Map<String, PlaybackResult>,
+    /** 解析失败的集及原因，按 episodeId 索引。 */
+    val errors: Map<String, OpenhongguoException> = emptyMap(),
+)
+
 /** ClientOptions 是 OpenhongguoClient 的设置，全部可选。 */
 data class ClientOptions(
     /** 读取类接口的地址，如 "https://host"；默认与 App 一致。 */
@@ -200,6 +208,27 @@ class OpenhongguoClient internal constructor(private val engine: Engine) {
             contentKey = (o.opt("contentKey") as? JSONObject)?.let(ContentKey::fromJson),
             contentKeyError = (o.opt("contentKeyError") as? JSONObject)?.let(OpenhongguoException::fromJson),
         )
+    }
+
+    /** 多集的播放模型，一次请求批量解析（同一播放身份复用）；results 只含成功的集，errors 逐集给出失败原因。 */
+    suspend fun resolvePlaybackBatch(episodeIds: List<String>): BatchPlaybackResult {
+        val o = call("resolvePlaybackBatch", JSONArray(episodeIds)).asObject()
+        val results = mutableMapOf<String, PlaybackResult>()
+        (o.opt("results") as? JSONObject)?.let { r ->
+            for (k in r.keys()) {
+                val e = r.getJSONObject(k)
+                results[k] = PlaybackResult(
+                    playback = Playback.fromJson(e.opt("playback").asObject()),
+                    contentKey = (e.opt("contentKey") as? JSONObject)?.let(ContentKey::fromJson),
+                    contentKeyError = (e.opt("contentKeyError") as? JSONObject)?.let(OpenhongguoException::fromJson),
+                )
+            }
+        }
+        val errors = mutableMapOf<String, OpenhongguoException>()
+        (o.opt("errors") as? JSONObject)?.let { r ->
+            for (k in r.keys()) errors[k] = OpenhongguoException.fromJson(r.getJSONObject(k))
+        }
+        return BatchPlaybackResult(results, errors)
     }
 
     /** 一章有声书的播放模型；加密章节同时给出内容密钥。按章单独取模，不要批量。 */

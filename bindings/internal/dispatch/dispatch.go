@@ -61,6 +61,24 @@ type playbackResult struct {
 	ContentKeyError map[string]any    `json:"contentKeyError,omitempty"`
 }
 
+// batchPlaybackResult 是 resolvePlaybackBatch 的结果：results 只含成功
+// 解析的集，errors 逐集给出失败原因。
+type batchPlaybackResult struct {
+	Results map[string]playbackResult `json:"results"`
+	Errors  map[string]map[string]any `json:"errors,omitempty"`
+}
+
+func toPlaybackResult(pb *model.Playback) playbackResult {
+	if pb.Protected {
+		key, kerr := sdk.ContentKey(pb)
+		if kerr != nil {
+			return playbackResult{Playback: pb, ContentKeyError: Error(kerr)}
+		}
+		return playbackResult{Playback: pb, ContentKey: &key}
+	}
+	return playbackResult{Playback: pb}
+}
+
 var methods = map[string]method{
 	"discover": func(ctx context.Context, c *sdk.Client, a []json.RawMessage) (any, error) {
 		var o sdk.DiscoverOptions
@@ -192,6 +210,24 @@ var methods = map[string]method{
 		}
 		return playbackResult{Playback: pb}, nil
 	}),
+	"resolvePlaybackBatch": func(ctx context.Context, c *sdk.Client, a []json.RawMessage) (any, error) {
+		var ids []string
+		if err := arg(a, 0, &ids); err != nil {
+			return nil, err
+		}
+		pbs, errs := c.ResolvePlaybackBatch(ctx, ids)
+		out := batchPlaybackResult{Results: make(map[string]playbackResult, len(pbs))}
+		for id, pb := range pbs {
+			out.Results[id] = toPlaybackResult(pb)
+		}
+		if len(errs) > 0 {
+			out.Errors = make(map[string]map[string]any, len(errs))
+			for id, e := range errs {
+				out.Errors[id] = Error(e)
+			}
+		}
+		return out, nil
+	},
 	"audioPlayback": func(ctx context.Context, c *sdk.Client, a []json.RawMessage) (any, error) {
 		var bookID, itemID string
 		var toneID int
