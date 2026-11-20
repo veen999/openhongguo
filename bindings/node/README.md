@@ -63,6 +63,7 @@ npm install openhongguo
 | `getSeries(seriesId)` | 加载一部短剧的详情 |
 | `getSeriesBatch(seriesIds)` | 加载多部短剧及其分集，按请求顺序返回 |
 | `listEpisodes(seriesId, options)` | 加载一部短剧的分集列表 |
+| `listDanmaku(seriesId, episodeId, options)` | 加载一集的弹幕，一次一页 |
 | `seasons(seriesId)` | 列出多季短剧的全部季 |
 | `seriesRecommend(seriesId)` | 加载一部短剧的相关推荐 |
 | `getAlbum(albumId)` | 加载一个合集（多季合集）及其各季 |
@@ -85,7 +86,7 @@ npm install openhongguo
 | 方法 | 作用 |
 |---|---|
 | `person(userId)` | 加载一位演员或一个角色的主页 |
-| `personWorks(userId, cursor)` | 加载一位演员参演的短剧，一次一页（主页上的作品 › 剧作） |
+| `personWorks(userId, cursor)` | 加载一位演员参演的短剧，一次一页（主页上的剧作） |
 
 ### 评论与弹幕
 
@@ -257,7 +258,7 @@ try {
 |---|---|---|
 | `INVALID_OPTIONS` | 客户端的设置或调用参数无效 | 否 |
 | `PROFILE_NOT_FOUND` | 还没有保存过设备档案 | 否 |
-| `SIGNER_UNAVAILABLE` | 请求需要签名，而客户端没有可用的签名器 | 否 |
+| `SIGNER_UNAVAILABLE` | 请求需要签名，而客户端没有可用的签名器，或者签名服务不可用 | 否 |
 | `AUTHENTICATION_REQUIRED` | 内容需要登录才能访问，匿名客户端无法继续 | 否 |
 | `NOT_PROTECTED` | 为未加密的播放模型请求了内容密钥 | 否 |
 | `DRM_PROTECTED` | 分集是加密的，需要内容密钥才能解密 | 否 |

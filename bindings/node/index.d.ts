@@ -2,6 +2,8 @@ import type {
   Album,
   CategoryPage,
   ContentKey,
+  DanmakuOptions,
+  DanmakuPage,
   Device,
   DiscoverOptions,
   Episode,
@@ -128,6 +130,13 @@ export interface ClientOptions {
   deviceResets?: number;
   /** 新注册设备自称的机型；未填的字段取默认值（小米 14）。 */
   device?: Partial<Device>;
+  /**
+   * openhongguo-signer 签名服务的地址，如 "https://signer.example.com"。
+   * 不填时用内置的签名实现；填了以后，请求签名交给签名服务。
+   */
+  signerUrl?: string;
+  /** 签名服务的 token，服务端设置了 SIGNER_TOKEN 时才需要。 */
+  signerToken?: string;
 }
 
 /** PlaybackResult 是 resolvePlayback 的结果。 */
@@ -160,6 +169,8 @@ export declare class Client {
   getSeriesBatch(seriesIds: string[]): Promise<SeriesDetail[]>;
   /** 一部剧的分集列表。 */
   listEpisodes(seriesId: string, options?: EpisodeOptions): Promise<Page<Episode>>;
+  /** 一集的弹幕，一页；翻到 hasMore 为假为止。 */
+  listDanmaku(seriesId: string, episodeId: string, options?: DanmakuOptions): Promise<DanmakuPage>;
   /** 多季剧的全部季。 */
   seasons(seriesId: string): Promise<Album>;
   /** 一部剧的相关推荐。 */

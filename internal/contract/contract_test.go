@@ -1,6 +1,7 @@
 package contract
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"net/url"
@@ -88,28 +89,35 @@ func (f *fixtureTransport) Do(_ context.Context, req *sdk.Request) (*sdk.Respons
 		return f.file("short-rank.json"), nil
 	}
 	if strings.HasPrefix(u.Path, "/novel/commentapi/user/profile/") {
+		// The page asks for its tabs (no tab_type) before the works.
+		if !bytes.Contains(req.Body, []byte(`"tab_type"`)) {
+			return f.file("person-tabs.json"), nil
+		}
 		return f.file("person-works.json"), nil
+	}
+	if strings.HasPrefix(u.Path, "/novel/commentapi/comment/list/") {
+		return f.file("danmaku-response.json"), nil
 	}
 	if u.Path == protocol.PathSeriesBatch {
 		return f.file("series-batch.json"), nil
 	}
 	name := map[string]string{
-		protocol.PathRegister:        "register-response.json",
-		protocol.PathDiscover:        "discover-response.json",
-		protocol.PathSearch:          "search-response.json",
-		protocol.PathSeries:          "series-response.json",
-		protocol.PathPlayback:        "clear-playback.json",
-		protocol.PathPlaybackMobileV5: "clear-playback.json",
-		protocol.PathPlaybackMulti:   "clear-playback.json",
+		protocol.PathRegister:                                   "register-response.json",
+		protocol.PathDiscover:                                   "discover-response.json",
+		protocol.PathSearch:                                     "search-response.json",
+		protocol.PathSeries:                                     "series-response.json",
+		protocol.PathPlayback:                                   "clear-playback.json",
+		protocol.PathPlaybackMobileV5:                           "clear-playback.json",
+		protocol.PathPlaybackMulti:                              "clear-playback.json",
 		fmt.Sprintf(protocol.PathPlaybackMultiV2Fmt, "default"): "clear-playback.json",
-		protocol.PathVideoTabMulti:   "clear-playback.json",
-		protocol.PathSuggest:         "suggest-response.json",
-		protocol.PathCue:             "cue-response.json",
-		protocol.PathCategory:        "category-front.json",
-		protocol.PathCategoryLanding: "category-landing.json",
-		protocol.PathRankCells:       "rank-rows.json",
-		protocol.PathProfile:         "person.json",
-		protocol.PathSubscribeList:   "new-releases.json",
+		protocol.PathVideoTabMulti:                              "clear-playback.json",
+		protocol.PathSuggest:                                    "suggest-response.json",
+		protocol.PathCue:                                        "cue-response.json",
+		protocol.PathCategory:                                   "category-front.json",
+		protocol.PathCategoryLanding:                            "category-landing.json",
+		protocol.PathRankCells:                                  "rank-rows.json",
+		protocol.PathProfile:                                    "person.json",
+		protocol.PathSubscribeList:                              "new-releases.json",
 	}[u.Path]
 	if name == "" {
 		f.t.Fatalf("unexpected request to %s", u.Path)
@@ -148,7 +156,7 @@ func TestRunPassesWhenServiceMatchesFixtures(t *testing.T) {
 			t.Errorf("%s: err=%v drifts=%v", c.Name, c.Err, c.Drifts)
 		}
 	}
-	if strings.Join(names, ",") != "discover,register,search,series detail,series playback,suggest,related,seasons,series batch,hot search,category,landing,rank rows,filter panel,short filter,short rank,actor rank,person,person works,new releases,cues" {
+	if strings.Join(names, ",") != "discover,register,search,series detail,series playback,danmaku,suggest,related,seasons,series batch,hot search,category,landing,rank rows,filter panel,short filter,short rank,actor rank,person,person works,new releases,cues" {
 		t.Fatalf("checks = %v", names)
 	}
 }
@@ -171,4 +179,31 @@ func TestRunReportsDriftInSeriesDetail(t *testing.T) {
 		return
 	}
 	t.Fatal("no series detail check")
+}
+
+func TestEpisodeEnvelopeUnwrapsV5Playback(t *testing.T) {
+	const id = "7100000000000201"
+	entry := `{"expire_time":1,"video_model":"{\"status\":10,\"video_id\":\"v\"}"}`
+	legacy := `{"code":0,"data":` + entry + `}`
+	for name, body := range map[string]string{
+		"flat":    `{"code":0,"data":{"` + id + `":` + entry + `}}`,
+		"grouped": `{"code":0,"data":{"1004":{"` + id + `":` + entry + `}}}`,
+		"legacy":  legacy,
+	} {
+		got, err := Shape(episodeEnvelope([]byte(body), id))
+		if err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		want, _ := Shape([]byte(legacy))
+		if fmt.Sprint(got) != fmt.Sprint(want) {
+			t.Fatalf("%s: shape = %v, want %v", name, got, want)
+		}
+		if strings.Contains(fmt.Sprint(got), id) {
+			t.Fatalf("%s: episode ID leaked into the shape", name)
+		}
+	}
+	other := `{"code":0,"data":{"7100000000000999":` + entry + `}}`
+	if string(episodeEnvelope([]byte(other), id)) != other {
+		t.Fatal("a response without the requested episode was rewritten")
+	}
 }

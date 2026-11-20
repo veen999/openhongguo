@@ -272,6 +272,92 @@ class ContentType {
   String toString() => 'ContentType($value)';
 }
 
+/// Danmaku 是一条弹幕。它不带发送者的身份。
+class Danmaku {
+  final String id;
+  final String text;
+  /// OffsetMS 是弹幕在分集里出现的时间，单位毫秒。
+  final int offsetMs;
+  /// CreatedAt 是发送时间。
+  final String createdAt;
+  /// Likes 是点赞数；PlusOnes 是其他观众跟发 "+1" 的次数。
+  final int likes;
+  final int plusOnes;
+
+  const Danmaku({
+    this.id = '',
+    this.text = '',
+    this.offsetMs = 0,
+    this.createdAt = '',
+    this.likes = 0,
+    this.plusOnes = 0,
+  });
+
+  /// 从 Go SDK 输出的 JSON 解码；缺省的字段取零值。
+  factory Danmaku.fromJson(Map<String, dynamic> j) => Danmaku(
+        id: _asString(j['id']),
+        text: _asString(j['text']),
+        offsetMs: _asInt(j['offset_ms']),
+        createdAt: _asString(j['created_at']),
+        likes: _asInt(j['likes']),
+        plusOnes: _asInt(j['plus_ones']),
+      );
+
+  /// 编码成与 Go SDK 相同的 JSON。
+  Map<String, dynamic> toJson() => {
+        'id': id,
+        'text': text,
+        'offset_ms': offsetMs,
+        'created_at': createdAt,
+        'likes': likes,
+        'plus_ones': plusOnes,
+      };
+}
+
+/// DanmakuPage 是一集弹幕的一页：服务端按播放时间划出的一段（2026-11-11
+/// 实测为 30 秒）。
+class DanmakuPage {
+  /// Items 按出现时间排序。这一段没有弹幕时为空，但 HasMore 仍可能为真。
+  final List<Danmaku> items;
+  /// StartMS 和 EndMS 是这一页覆盖的播放时间，单位毫秒。
+  final int startMs;
+  final int endMs;
+  /// Total 是服务端统计的本集弹幕总数，服务端给出时才有（有些设备拿不到）。
+  /// 服务端只下发其中精选的一部分，所以它通常远大于能取到的条数。
+  final int total;
+  final bool hasMore;
+  final String cursor;
+
+  const DanmakuPage({
+    this.items = const [],
+    this.startMs = 0,
+    this.endMs = 0,
+    this.total = 0,
+    this.hasMore = false,
+    this.cursor = '',
+  });
+
+  /// 从 Go SDK 输出的 JSON 解码；缺省的字段取零值。
+  factory DanmakuPage.fromJson(Map<String, dynamic> j) => DanmakuPage(
+        items: _asList(j['items'], (e) => Danmaku.fromJson(_asMap(e))),
+        startMs: _asInt(j['start_ms']),
+        endMs: _asInt(j['end_ms']),
+        total: _asInt(j['total']),
+        hasMore: _asBool(j['has_more']),
+        cursor: _asString(j['cursor']),
+      );
+
+  /// 编码成与 Go SDK 相同的 JSON。
+  Map<String, dynamic> toJson() => {
+        'items': items.map((e) => e.toJson()).toList(),
+        'start_ms': startMs,
+        'end_ms': endMs,
+        'total': total,
+        'has_more': hasMore,
+        'cursor': cursor,
+      };
+}
+
 /// Device 是匿名身份出示的手机。注册请求体、
 /// 每个请求的设备参数和 User-Agent 都描述它，所以一个设备 id 始终对应一个机型。
 class Device {
@@ -2003,7 +2089,7 @@ class Work {
       };
 }
 
-/// WorkPage 是某人作品的一页（作品 › 剧作）。
+/// WorkPage 是某人作品的一页（主页上的剧作）。
 class WorkPage {
   final List<Work> items;
   final bool hasMore;

@@ -92,6 +92,9 @@ const (
 	// PathCommentList is the commentapi stream behind a video's comments
 	// and danmaku (comment_type 20); observed 2026-11-05.
 	PathCommentList = "/novel/commentapi/comment/list/%s/v1/"
+	// PathDanmaku is the comment list the player's 弹幕 layer reads; %s is
+	// the episode id (observed 2026-11-11). 与 PathCommentList 同一路由。
+	PathDanmaku = "/novel/commentapi/comment/list/%s/v1/"
 	// DefaultRankCell is the bookmall cell the 经典 channel serves for the
 	// ranking page (observed: algo 179 推荐榜).
 	DefaultRankCell = "7224069876808155173"

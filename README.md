@@ -183,7 +183,7 @@ case err != nil:
 |---|---|---|---|
 | `ErrInvalidOptions` | `INVALID_OPTIONS` | 客户端的设置或调用参数无效 | 否 |
 | `ErrProfileNotFound` | `PROFILE_NOT_FOUND` | 还没有保存过设备档案 | 否 |
-| `ErrSignerUnavailable` | `SIGNER_UNAVAILABLE` | 请求需要签名，而客户端没有可用的签名器 | 否 |
+| `ErrSignerUnavailable` | `SIGNER_UNAVAILABLE` | 请求需要签名，而客户端没有可用的签名器，或者签名服务不可用 | 否 |
 | `ErrAuthenticationRequired` | `AUTHENTICATION_REQUIRED` | 内容需要登录才能访问，匿名客户端无法继续 | 否 |
 | `ErrNotProtected` | `NOT_PROTECTED` | 为未加密的播放模型请求了内容密钥 | 否 |
 | `ErrDRMProtected` | `DRM_PROTECTED` | 分集是加密的，需要内容密钥才能解密 | 否 |
@@ -314,6 +314,7 @@ type Transport interface {
 | `GetSeries` | `getSeries(seriesId)` | 加载一部短剧的详情 |
 | `GetSeriesBatch` | `getSeriesBatch(seriesIds)` | 加载多部短剧及其分集，按请求顺序返回 |
 | `ListEpisodes` | `listEpisodes(seriesId, options)` | 加载一部短剧的分集列表 |
+| `ListDanmaku` | `listDanmaku(seriesId, episodeId, options)` | 加载一集的弹幕，一次一页 |
 | `Seasons` | `seasons(seriesId)` | 列出多季短剧的全部季 |
 | `SeriesRecommend` | `seriesRecommend(seriesId)` | 加载一部短剧的相关推荐 |
 | `GetAlbum` | `getAlbum(albumId)` | 加载一个合集（多季合集）及其各季 |
@@ -336,7 +337,7 @@ type Transport interface {
 | Go | 其他语言 | 作用 |
 |---|---|---|
 | `Person` | `person(userId)` | 加载一位演员或一个角色的主页 |
-| `PersonWorks` | `personWorks(userId, cursor)` | 加载一位演员参演的短剧，一次一页（主页上的作品 › 剧作） |
+| `PersonWorks` | `personWorks(userId, cursor)` | 加载一位演员参演的短剧，一次一页（主页上的剧作） |
 
 ### 评论与弹幕
 

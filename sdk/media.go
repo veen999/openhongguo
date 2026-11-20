@@ -7,6 +7,7 @@ import (
 	"crypto/rand"
 	"encoding/binary"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"time"
 
@@ -484,4 +485,11 @@ func ContentKey(pb *model.Playback) (model.ContentKey, error) {
 		return model.ContentKey{}, fmt.Errorf("%w: %v", ErrDRMProtected, err)
 	}
 	return model.ContentKey{Hex: k.Hex, Version: k.Version}, nil
+}
+
+// playbackRouteUnavailable 判断播放路由是否在服务端不存在（404/405）；
+// 随上游 v0.4.0 合并保留，供取址链的兼容判断使用。
+func playbackRouteUnavailable(err error) bool {
+	var api *APIError
+	return errors.As(err, &api) && (api.HTTPStatus == 404 || api.HTTPStatus == 405)
 }

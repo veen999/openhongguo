@@ -122,6 +122,50 @@ export interface ContentKey {
 export type ContentType = number;
 
 /**
+ * Danmaku 是一条弹幕。它不带发送者的身份。
+ */
+export interface Danmaku {
+  id: string;
+  text: string;
+  /**
+   * OffsetMS 是弹幕在分集里出现的时间，单位毫秒。
+   */
+  offset_ms: number;
+  /**
+   * CreatedAt 是发送时间。
+   */
+  created_at?: string;
+  /**
+   * Likes 是点赞数；PlusOnes 是其他观众跟发 "+1" 的次数。
+   */
+  likes?: number;
+  plus_ones?: number;
+}
+
+/**
+ * DanmakuPage 是一集弹幕的一页：服务端按播放时间划出的一段（2026-11-11
+ * 实测为 30 秒）。
+ */
+export interface DanmakuPage {
+  /**
+   * Items 按出现时间排序。这一段没有弹幕时为空，但 HasMore 仍可能为真。
+   */
+  items: Danmaku[];
+  /**
+   * StartMS 和 EndMS 是这一页覆盖的播放时间，单位毫秒。
+   */
+  start_ms: number;
+  end_ms?: number;
+  /**
+   * Total 是服务端统计的本集弹幕总数，服务端给出时才有（有些设备拿不到）。
+   * 服务端只下发其中精选的一部分，所以它通常远大于能取到的条数。
+   */
+  total?: number;
+  has_more: boolean;
+  cursor?: string;
+}
+
+/**
  * Device 是匿名身份出示的手机。注册请求体、
  * 每个请求的设备参数和 User-Agent 都描述它，所以一个设备 id 始终对应一个机型。
  */
@@ -916,7 +960,7 @@ export interface Work {
 }
 
 /**
- * WorkPage 是某人作品的一页（作品 › 剧作）。
+ * WorkPage 是某人作品的一页（主页上的剧作）。
  */
 export interface WorkPage {
   items: Work[];

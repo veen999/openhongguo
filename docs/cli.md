@@ -108,6 +108,17 @@ openhongguo-cli 是 openhongguo 的命令行工具，命令名是 `ohg`。它可
 
 如果只下载一集，也可以用 `play <短剧> --episode N --download PATH`。
 
+### 弹幕
+
+| 命令 | 作用 |
+|---|---|
+| `ohg danmaku 全球死考第一季` | 列出第 1 集的弹幕。每行是出现时间和内容，按时间排序 |
+| `ohg danmaku 7675400266065136665 --episode 5 --json` | 以 JSON 输出第 5 集的弹幕，带毫秒时间、点赞数和发送时间 |
+
+`danmaku` 翻完一集的全部弹幕再输出，最后在标准错误输出条数。弹幕不带发送者的身份。
+
+> **注意**：服务端只下发一部分弹幕，不同的匿名设备拿到的条数也不一样。服务端给出总数时，`ohg` 一并输出，它通常比列出的条数多得多。
+
 ### 浏览与发现
 
 | 命令 | 作用 |
@@ -211,6 +222,10 @@ openhongguo-cli 是 openhongguo 的命令行工具，命令名是 `ohg`。它可
 | `OHG_API_ORIGIN` | 读取类接口的地址 |
 | `OHG_REGISTER_ORIGIN` | 设备注册接口的地址 |
 | `OHG_DISTRIBUTION_ORIGIN` | 短剧筛选（`/reading/distribution/`）和活动榜接口的地址 |
+| `OHG_SIGNER_URL` | openhongguo-signer 签名服务的地址，例如 `https://signer.example.com`。设置后，请求签名交给签名服务，不再用内置的 Go 实现 |
+| `OHG_SIGNER_TOKEN` | 签名服务的 token。服务端设置了 `SIGNER_TOKEN` 时才需要 |
+
+内置的 Go 签名失效时（例如 App 升级后签名算法变化），可以部署签名服务（见 [signer/README.md](../signer/README.md)），再设置 `OHG_SIGNER_URL` 切过去。签名服务不可用时，`ohg` 不会回退到内置实现，而是报 `signer unavailable` 和服务给出的原因，退出码与其他「暂时不可用」的错误相同。
 
 配置目录的默认值是 `<用户配置目录>/openhongguo`。在 macOS 上，它是 `~/Library/Application Support/openhongguo`。
 

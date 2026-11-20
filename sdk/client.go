@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/beilunyang/openhongguo/internal/protocol"
+	"github.com/beilunyang/openhongguo/internal/protocol/sign"
 
 	"github.com/beilunyang/openhongguo/sdk/model"
 )
@@ -37,6 +38,7 @@ type Client struct {
 	transport      Transport
 	profileStore   ProfileStore
 	signer         Signer
+	playbackSigner *sign.PlaybackV5Signer
 	authProvider   AuthProvider
 	logger         Logger
 	clock          func() time.Time
@@ -70,6 +72,8 @@ type Client struct {
 	fridaMu      sync.Mutex
 	fridaProfile *fridaServiceProfile
 	fridaAt      time.Time
+	// durations 记住各集的时长，供 ListDanmaku 使用。
+	durations durationCache
 }
 
 // NewClient 根据 opts 创建客户端。Transport 和 ProfileStore 必填；
@@ -112,18 +116,30 @@ func NewClient(opts Options) (*Client, error) {
 	if err := opts.Device.Validate(); err != nil {
 		return nil, fmt.Errorf("%w: %v", ErrInvalidOptions, err)
 	}
+	transport := opts.Transport
+	if opts.SignerURL != "" {
+		u, err := url.Parse(opts.SignerURL)
+		if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
+			return nil, fmt.Errorf("%w: SignerURL must be an http(s) address", ErrInvalidOptions)
+		}
+		transport = newRemoteSigner(transport, opts.SignerURL, opts.SignerToken)
+	}
 	c := &Client{
 		device:        opts.Device.OrDefault(),
 		retryAttempts: attempts,
 		deviceResets:  resets,
-		transport:     opts.Transport, profileStore: opts.ProfileStore,
-		signer: opts.Signer, authProvider: opts.AuthProvider,
-		logger: opts.Logger, clock: opts.Clock,
+		transport:     transport, profileStore: opts.ProfileStore,
+		signer:         opts.Signer,
+		playbackSigner: sign.NewPlaybackV5Signer(opts.Clock().UnixMilli()),
+		authProvider:   opts.AuthProvider,
+		logger:         opts.Logger, clock: opts.Clock,
 		apiOrigin: api, registerOrigin: reg, distOrigin: dist,
 	}
-	// 远程计算-unidbg 的传输层重签（见 resign_transport.go）：包装后
-	// 按客户端当前实际生效方式逐请求决定是否重签，非 unidbg 时透传。
-	c.transport = &resignTransport{next: opts.Transport, client: c}
+	// 远程计算-unidbg 的传输层重签（见 resign_transport.go）：包在最外
+	// 层，按客户端当前实际生效方式逐请求决定是否重签，非 unidbg 时
+	// 透传；内层是上面的最终传输（配置了 SignerURL 时即上游的远程
+	// 签名包装，两者按各自条件工作、互不干扰）。
+	c.transport = &resignTransport{next: c.transport, client: c}
 	return c, nil
 }
 
@@ -211,6 +227,11 @@ func (c *Client) doOnce(ctx context.Context, method, rawURL string, headers map[
 	}
 	resp, err := c.transport.Do(ctx, req)
 	if err != nil {
+		// 签名服务（Options.SignerURL）的错误原样返回，方便看出签名服务的问题；
+		// 其余错误可能带着完整 URL，只返回脱敏后的地址。
+		if errors.Is(err, ErrSignerUnavailable) {
+			return nil, nil, err
+		}
 		return nil, nil, fmt.Errorf("%w: %s", ErrTransport, protocol.RedactedURL(req.URL))
 	}
 	if c.logger != nil {
