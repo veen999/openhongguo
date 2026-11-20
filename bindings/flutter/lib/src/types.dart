@@ -2172,6 +2172,32 @@ class EpisodeOptions {
       };
 }
 
+/// DanmakuOptions 选择一页弹幕。
+///
+/// Cursor 是上一页给出的令牌。Cursor 为空时，从 StartMs（这一集的播放位置，
+/// 单位毫秒）读起，0 即开头；播放器拖动进度条后，用新的位置重新读。
+/// 服务端从包含这个位置的那一段开始返回，所以第一页可能带着这个位置之前
+/// 一点的弹幕。Cursor 和 StartMs 只能给一个。
+///
+/// PageSize 是一页最多几条，0 取官方播放器的 90；服务端每页给出的条数有上限，
+/// 再大也不会更多。
+class DanmakuOptions {
+  final String? cursor;
+  final int? startMs;
+  final int? pageSize;
+
+  const DanmakuOptions({this.cursor, this.startMs, this.pageSize});
+
+  DanmakuOptions copyWith({String? cursor, int? startMs, int? pageSize}) =>
+      DanmakuOptions(cursor: cursor ?? this.cursor, startMs: startMs ?? this.startMs, pageSize: pageSize ?? this.pageSize);
+
+  Map<String, dynamic> toJson() => {
+        if (cursor != null) 'cursor': cursor!,
+        if (startMs != null) 'startMs': startMs!,
+        if (pageSize != null) 'pageSize': pageSize!,
+      };
+}
+
 /// LandingOptions 选择一个分类落地页。
 ///
 /// Tab 是 Categories 给出的 tab 值：8（全部，默认）、1（男生）或 0（女生）。
