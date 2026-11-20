@@ -359,6 +359,7 @@ type Transport interface {
 | `ResolvePlayback` | `resolvePlayback(episodeId)` | 加载一集的播放模型：各清晰度的地址、编码和码率 |
 | `ResolvePlaybackBatch` | `resolvePlaybackBatch(ids)` | 批量解析多集的播放模型 |
 | `SetSigningMode` | `setSigningMode(mode)` | 切换播放取址的计算方式："local"（默认）/ "unidbg" / "frida"；未知取值按本地计算处理 |
+| `SetSigningModeAuto` | `setSigningModeAuto(mode)` | 是设置同步专用入口：App 把策略层自动切换的结果回写为持久化设置后，用本方法把实际生效方式镜像回 SDK（如重启后恢复） |
 | `EffectiveSigningMode` | `effectiveSigningMode()` | 返回算法策略层当前实际生效的计算方式（"local" / "unidbg" / "frida"） |
 | `DebugChannels` | `debugChannels(episodeId)` | runs each playback issuance channel exactly once for diagnostics and reports per-channel outcome. |
 | `ContentKey` | 并入 `resolvePlayback` 的结果 | 从播放模型算出加密分集的内容密钥 |

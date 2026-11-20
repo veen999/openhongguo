@@ -74,9 +74,32 @@ func (c *Client) EffectiveSigningMode() string {
 	return "local"
 }
 
+// SetSigningModeAuto 是设置同步专用入口：App 把策略层自动切换的结果
+// 回写为持久化设置后，用本方法把实际生效方式镜像回 SDK（如重启后
+// 恢复）。与 SetSigningMode 的区别是它不改动用户选择锚点、不清零
+// 失败计数——锚点仍是用户显式选的方式，本地恢复探测因此继续工作。
+// 锚点不是本地方式时（用户已手动改选）直接忽略。
+func (c *Client) SetSigningModeAuto(mode string) {
+	if c.signingMode() != SigningModeLocal {
+		return
+	}
+	var next int32 = SigningModeLocal
+	switch strings.ToLower(strings.TrimSpace(mode)) {
+	case "unidbg":
+		next = SigningModeUnidbg
+	case "frida":
+		next = SigningModeFrida
+	}
+	if next == SigningModeFrida {
+		return // 自动切换只在本地与 unidbg 之间发生
+	}
+	c.effSignMode.Store(next)
+}
+
 // localFailureLimit 是本地方式连续取址失败多少次后自动切换到
-// 远程计算-unidbg（与 hongguoTV 的 PlaybackAlgorithmPolicy 一致：2 次）。
-const localFailureLimit = 2
+// 远程计算-unidbg。用户裁定（2026-11-20，案二）：失败 1 次即当场
+// 切换并在同一次取址内重试，播放不出现失败界面、不需用户点重试。
+const localFailureLimit = 1
 
 // noteLocalFailure 记录一次本地取址失败；达到阈值时把实际生效方式
 // 切到 unidbg 并返回 true，调用方应用新方式重试本次取址。

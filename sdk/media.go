@@ -49,10 +49,10 @@ func (c *Client) ResolvePlayback(ctx context.Context, episodeID string, _ Playba
 		c.noteResolveSuccess(mode, episodeID)
 		return playback, err
 	}
-	// 算法策略层（镜像 hongguoTV 的 PlaybackAlgorithmPolicy）：用户选
-	// 的是本地、本次也是按本地取的，连续失败满两次即把实际生效方式
-	// 切到远程计算-unidbg，并用新方式重试本次取址；远程方式成功后
-	// 的本地恢复探测见 noteResolveSuccess。
+	// 算法策略层：用户选的是本地、本次也是按本地取的，失败一次即把
+	// 实际生效方式切到远程计算-unidbg，并用新方式重试本次取址（案二
+	// 一次直达，播放不出现失败界面）；远程方式成功后的本地恢复探测
+	// 见 noteResolveSuccess。
 	if c.signingMode() == SigningModeLocal && mode == SigningModeLocal && c.noteLocalFailure() {
 		if playback, err := c.resolvePlaybackChain(ctx, episodeID, SigningModeUnidbg); playback != nil {
 			c.noteResolveSuccess(SigningModeUnidbg, episodeID)

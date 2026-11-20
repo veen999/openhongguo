@@ -73,24 +73,20 @@ func policyTestClient(t *testing.T, fake *policyFake) *Client {
 	return c
 }
 
-func TestPolicyAutoSwitchAfterTwoLocalFailures(t *testing.T) {
+func TestPolicyAutoSwitchOnFirstLocalFailure(t *testing.T) {
 	fake := &policyFake{}
 	c := policyTestClient(t, fake)
 	c.SetSigningMode("local")
 	ctx := context.Background()
 
-	if pb, _ := c.ResolvePlayback(ctx, policyEpisodeID, PlaybackOptions{}); pb != nil {
-		t.Fatalf("first resolve should fail locally, got %+v", pb)
-	}
-	if got := c.EffectiveSigningMode(); got != "local" {
-		t.Fatalf("after 1 failure effective = %q, want local", got)
-	}
+	// 案二（一次直达）：本地第一次失败即在同一次取址内切换并重试，
+	// 调用方直接拿到远程结果，不感知失败。
 	pb, err := c.ResolvePlayback(ctx, policyEpisodeID, PlaybackOptions{})
 	if pb == nil {
-		t.Fatalf("second resolve should auto-switch to unidbg and succeed, err = %v", err)
+		t.Fatalf("first resolve should auto-switch to unidbg in-call and succeed, err = %v", err)
 	}
 	if got := c.EffectiveSigningMode(); got != "unidbg" {
-		t.Fatalf("after 2 failures effective = %q, want unidbg", got)
+		t.Fatalf("after first failure effective = %q, want unidbg", got)
 	}
 }
 
@@ -99,8 +95,7 @@ func TestPolicyProbeSwitchesBackToLocal(t *testing.T) {
 	c := policyTestClient(t, fake)
 	c.SetSigningMode("local")
 	ctx := context.Background()
-	// 先触发自动切换到 unidbg（同上）。
-	_, _ = c.ResolvePlayback(ctx, policyEpisodeID, PlaybackOptions{})
+	// 先触发自动切换到 unidbg（同上，一次直达）。
 	if pb, _ := c.ResolvePlayback(ctx, policyEpisodeID, PlaybackOptions{}); pb == nil {
 		t.Fatal("setup: expected auto-switch resolve to succeed via unidbg")
 	}
@@ -143,5 +138,42 @@ func TestSetSigningModeSameValueKeepsPolicyState(t *testing.T) {
 	}
 	if got := c.localFailCount.Load(); got != 0 {
 		t.Fatalf("failure count = %d, want 0", got)
+	}
+}
+
+func TestSetSigningModeAutoKeepsAnchorAndProbe(t *testing.T) {
+	fake := &policyFake{}
+	c := policyTestClient(t, fake)
+	c.SetSigningMode("local")
+	ctx := context.Background()
+
+	// App 同步回写：生效方式镜像为 unidbg，但用户锚点仍是本地。
+	c.SetSigningModeAuto("unidbg")
+	if got := c.EffectiveSigningMode(); got != "unidbg" {
+		t.Fatalf("effective = %q, want unidbg after auto sync", got)
+	}
+	if got := c.signingMode(); got != SigningModeLocal {
+		t.Fatalf("anchor changed by auto sync: %d", got)
+	}
+	// 锚点仍是本地 → 远程成功后仍会探活，本地恢复即切回。
+	fake.serveV5.Store(true)
+	if pb, _ := c.ResolvePlayback(ctx, policyEpisodeID, PlaybackOptions{}); pb == nil {
+		t.Fatal("remote resolve should succeed")
+	}
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		if c.EffectiveSigningMode() == "local" {
+			break
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	if got := c.EffectiveSigningMode(); got != "local" {
+		t.Fatalf("effective = %q, want local after probe success", got)
+	}
+	// 用户手动改选后，自动同步入口必须失效（不得覆盖用户选择）。
+	c.SetSigningMode("unidbg")
+	c.SetSigningModeAuto("local")
+	if got := c.EffectiveSigningMode(); got != "unidbg" {
+		t.Fatalf("auto sync overrode manual selection: effective = %q", got)
 	}
 }

@@ -218,6 +218,14 @@ var methods = map[string]method{
 		c.SetSigningMode(mode)
 		return nil, nil
 	},
+	"setSigningModeAuto": func(ctx context.Context, c *sdk.Client, a []json.RawMessage) (any, error) {
+		var mode string
+		if err := arg(a, 0, &mode); err != nil {
+			return nil, err
+		}
+		c.SetSigningModeAuto(mode)
+		return nil, nil
+	},
 	"effectiveSigningMode": func(ctx context.Context, c *sdk.Client, a []json.RawMessage) (any, error) {
 		return c.EffectiveSigningMode(), nil
 	},

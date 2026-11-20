@@ -181,6 +181,7 @@ Swift 包从 GitHub Release 下载 Go 编译出的 xcframework。最低系统版
 | `resolvePlayback(episodeId)` | 加载一集的播放模型：各清晰度的地址、编码和码率 |
 | `resolvePlaybackBatch(ids)` | 批量解析多集的播放模型 |
 | `setSigningMode(mode)` | 切换播放取址的计算方式："local"（默认）/ "unidbg" / "frida"；未知取值按本地计算处理 |
+| `setSigningModeAuto(mode)` | 是设置同步专用入口：App 把策略层自动切换的结果回写为持久化设置后，用本方法把实际生效方式镜像回 SDK（如重启后恢复） |
 | `effectiveSigningMode()` | 返回算法策略层当前实际生效的计算方式（"local" / "unidbg" / "frida"） |
 | `debugChannels(episodeId)` | runs each playback issuance channel exactly once for diagnostics and reports per-channel outcome. |
 | `resetDevice()` | 丢弃当前匿名设备，并注册一台新设备 |

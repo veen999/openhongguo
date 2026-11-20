@@ -259,7 +259,12 @@ class OpenhongguoClient internal constructor(private val engine: Engine) {
         call("setSigningMode", mode)
     }
 
-    /** 当前实际生效的计算方式："local" / "unidbg" / "frida"。本地连续取址失败会自动切到 unidbg，本地恢复后自动切回，可能与设置里选的不同。 */
+    /** 设置同步专用：把策略层自动切换出的实际生效方式镜像回 SDK（如重启后恢复）。不改动用户选择锚点，本地恢复探测继续工作。 */
+    suspend fun setSigningModeAuto(mode: String) {
+        call("setSigningModeAuto", mode)
+    }
+
+    /** 当前实际生效的计算方式："local" / "unidbg" / "frida"。本地取址失败会自动切到 unidbg，本地恢复后自动切回。 */
     suspend fun effectiveSigningMode(): String = call("effectiveSigningMode").asString()
 
     /** 沿着游标逐部返回书城频道的剧，去掉跨页重复。 */
