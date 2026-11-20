@@ -254,6 +254,11 @@ class OpenhongguoClient internal constructor(private val engine: Engine) {
         call("resetDevice")
     }
 
+    /** 设置播放取址的计算方式："local" 本地计算（默认）/ "unidbg" / "frida" 远程计算。只影响播放取址。 */
+    suspend fun setSigningMode(mode: String) {
+        call("setSigningMode", mode)
+    }
+
     /** 沿着游标逐部返回书城频道的剧，去掉跨页重复。 */
     fun discoverAll(options: DiscoverOptions = DiscoverOptions(), maxPages: Int = Int.MAX_VALUE): Flow<SeriesSummary> =
         walk(options.cursor, maxPages) { discover(options.copy(cursor = it)) }

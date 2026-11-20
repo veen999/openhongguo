@@ -66,6 +66,17 @@ func (c *Client) ResolvePlayback(ctx context.Context, episodeID string, _ Playba
 		// is the chain that issues (see resolvePlaybackViaMobileV5).
 		// The older channels stay behind it as fallbacks in case the
 		// platform rolls back.
+		// 用户选了远程计算方式时先走远程签名取址（见 remote_sign.go）：
+		// 取到模型即返回；远程失败先记下原因，本地链照常兜底，本地也
+		// 失败时把远程的失败原因报给用户（他选的方式出了什么问题）。
+		var remoteErr error
+		if c.signingMode() != SigningModeLocal {
+			if playback, err := c.resolvePlaybackViaRemote(ctx, episodeID); playback != nil {
+				return playback, err
+			} else if err != nil {
+				remoteErr = err
+			}
+		}
 		if pb, err := c.playbackIdentity(ctx); err == nil {
 			if playback, err := c.resolvePlaybackViaMobileV5(ctx, pb, episodeID); playback != nil {
 				return playback, err
@@ -93,6 +104,9 @@ func (c *Client) ResolvePlayback(ctx context.Context, episodeID string, _ Playba
 		}
 		if playback, err := c.resolvePlaybackViaTab(ctx, episodeID); playback != nil {
 			return playback, err
+		}
+		if remoteErr != nil {
+			return nil, remoteErr
 		}
 		return c.resolvePlaybackViaPlayer(ctx, episodeID)
 	})

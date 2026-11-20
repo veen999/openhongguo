@@ -33,6 +33,21 @@ func (c *Client) ResolvePlaybackBatch(ctx context.Context, ids []string) (map[st
 	if len(uniq) == 0 {
 		return playbacks, errs
 	}
+	// 远程计算方式没有批量签名协议：逐集走单集解析（其内部同样是
+	// 远程优先、本地兜底），结果按同一口径分桶。
+	if c.signingMode() != SigningModeLocal {
+		for _, id := range uniq {
+			pb, err := c.ResolvePlayback(ctx, id, PlaybackOptions{})
+			if pb != nil {
+				playbacks[id] = pb
+			} else if err != nil {
+				errs[id] = err
+			} else {
+				errs[id] = fmt.Errorf("no playback model for episode %s", id)
+			}
+		}
+		return playbacks, errs
+	}
 	p, idErr := c.playbackIdentity(ctx)
 	for start := 0; start < len(uniq); start += batchV5ChunkSize {
 		end := start + batchV5ChunkSize

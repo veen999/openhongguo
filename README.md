@@ -358,6 +358,7 @@ type Transport interface {
 |---|---|---|
 | `ResolvePlayback` | `resolvePlayback(episodeId)` | 加载一集的播放模型：各清晰度的地址、编码和码率 |
 | `ResolvePlaybackBatch` | `resolvePlaybackBatch(ids)` | 批量解析多集的播放模型 |
+| `SetSigningMode` | `setSigningMode(mode)` | 切换播放取址的计算方式："local"（默认）/ "unidbg" / "frida"；未知取值按本地计算处理 |
 | `ContentKey` | 并入 `resolvePlayback` 的结果 | 从播放模型算出加密分集的内容密钥 |
 | `ResetDevice` | `resetDevice()` | 丢弃当前匿名设备，并注册一台新设备 |
 <!-- /gen:methods-go -->

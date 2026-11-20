@@ -210,6 +210,14 @@ var methods = map[string]method{
 		}
 		return playbackResult{Playback: pb}, nil
 	}),
+	"setSigningMode": func(ctx context.Context, c *sdk.Client, a []json.RawMessage) (any, error) {
+		var mode string
+		if err := arg(a, 0, &mode); err != nil {
+			return nil, err
+		}
+		c.SetSigningMode(mode)
+		return nil, nil
+	},
 	"resolvePlaybackBatch": func(ctx context.Context, c *sdk.Client, a []json.RawMessage) (any, error) {
 		var ids []string
 		if err := arg(a, 0, &ids); err != nil {

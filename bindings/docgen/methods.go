@@ -21,7 +21,7 @@ var groups = []group{
 	{"演员", []string{"Person", "PersonWorks"}},
 	{"评论与弹幕", []string{"CommentList"}},
 	{"小说与听书", []string{"AudioPlayback", "ToneInfo", "ChapterContent"}},
-	{"播放与设备", []string{"ResolvePlayback", "ResolvePlaybackBatch", "ContentKey", "ResetDevice"}},
+	{"播放与设备", []string{"ResolvePlayback", "ResolvePlaybackBatch", "SetSigningMode", "ContentKey", "ResetDevice"}},
 }
 
 // renamed 是其他语言里名字不同的方法；空字符串表示其他语言没有这个方法。

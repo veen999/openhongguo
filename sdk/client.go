@@ -13,6 +13,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/beilunyang/openhongguo/internal/protocol"
@@ -53,6 +54,14 @@ type Client struct {
 	// 设备轮换后旧键自动失效（键与注册时的设备绑定）。
 	contentKeyMu sync.Mutex
 	contentKeys  map[string]string
+	// signMode 是播放取址的计算方式（见 remote_sign.go 的 SigningMode*），
+	// 由绑定层按用户设置写入；0 = 本地计算（默认）。只影响播放取址。
+	signMode atomic.Int32
+	// fridaMu 保护远程计算-frida 的设备档案缓存：身份由服务提供，
+	// 拉取一次缓存 60 秒（与服务方客户端的节奏一致）。
+	fridaMu      sync.Mutex
+	fridaProfile *fridaServiceProfile
+	fridaAt      time.Time
 }
 
 // NewClient 根据 opts 创建客户端。Transport 和 ProfileStore 必填；
