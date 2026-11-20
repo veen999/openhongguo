@@ -92,15 +92,16 @@ func resetClient(t *testing.T, h http.Handler, resets *int) (*sdk.Client, *syncL
 }
 
 func TestEmptyPlaybackMovesToFreshDevice(t *testing.T) {
-	// 第一台设备（目录游客）player 单集通道空 → 播放身份注册后
-	// 第一条 multi 通道即拿到模型。
+	// 播放身份注册（registers=1）后 v5、tab 多集在 registers≤emptyFor
+	// 时皆空；目录游客注册（registers=2）后 player 单集通道拿到模型，
+	// 共 3 次播放请求。
 	s := &devicePerRequest{emptyFor: 1}
 	client, _ := resetClient(t, s.handler(t), nil)
 	pb, err := client.ResolvePlayback(context.Background(), "7100000000000201", sdk.PlaybackOptions{})
 	if err != nil || pb == nil {
 		t.Fatalf("pb = %v err = %v", pb, err)
 	}
-	if s.registers != 2 || s.playbacks != 2 {
+	if s.registers != 2 || s.playbacks != 3 {
 		t.Fatalf("registers = %d playbacks = %d", s.registers, s.playbacks)
 	}
 }

@@ -259,6 +259,9 @@ class OpenhongguoClient internal constructor(private val engine: Engine) {
         call("setSigningMode", mode)
     }
 
+    /** 当前实际生效的计算方式："local" / "unidbg" / "frida"。本地连续取址失败会自动切到 unidbg，本地恢复后自动切回，可能与设置里选的不同。 */
+    suspend fun effectiveSigningMode(): String = call("effectiveSigningMode").asString()
+
     /** 沿着游标逐部返回书城频道的剧，去掉跨页重复。 */
     fun discoverAll(options: DiscoverOptions = DiscoverOptions(), maxPages: Int = Int.MAX_VALUE): Flow<SeriesSummary> =
         walk(options.cursor, maxPages) { discover(options.copy(cursor = it)) }

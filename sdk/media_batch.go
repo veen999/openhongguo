@@ -35,7 +35,7 @@ func (c *Client) ResolvePlaybackBatch(ctx context.Context, ids []string) (map[st
 	}
 	// 远程计算方式没有批量签名协议：逐集走单集解析（其内部同样是
 	// 远程优先、本地兜底），结果按同一口径分桶。
-	if c.signingMode() != SigningModeLocal {
+	if c.effectiveSigningMode() != SigningModeLocal {
 		for _, id := range uniq {
 			pb, err := c.ResolvePlayback(ctx, id, PlaybackOptions{})
 			if pb != nil {

@@ -43,6 +43,30 @@ type PlaybackOptions struct{}
 // 模型携带的是包装后的密钥材料（Playback.KeyMaterial），从不包含内容密钥本身、
 // 分片校验数据或解密后的媒体。
 func (c *Client) ResolvePlayback(ctx context.Context, episodeID string, _ PlaybackOptions) (*model.Playback, error) {
+	mode := c.effectiveSigningMode()
+	playback, err := c.resolvePlaybackChain(ctx, episodeID, mode)
+	if playback != nil {
+		c.noteResolveSuccess(mode, episodeID)
+		return playback, err
+	}
+	// 算法策略层（镜像 hongguoTV 的 PlaybackAlgorithmPolicy）：用户选
+	// 的是本地、本次也是按本地取的，连续失败满两次即把实际生效方式
+	// 切到远程计算-unidbg，并用新方式重试本次取址；远程方式成功后
+	// 的本地恢复探测见 noteResolveSuccess。
+	if c.signingMode() == SigningModeLocal && mode == SigningModeLocal && c.noteLocalFailure() {
+		if playback, err := c.resolvePlaybackChain(ctx, episodeID, SigningModeUnidbg); playback != nil {
+			c.noteResolveSuccess(SigningModeUnidbg, episodeID)
+			return playback, err
+		} else if err != nil {
+			return nil, err
+		}
+	}
+	return playback, err
+}
+
+// resolvePlaybackChain 按给定计算方式跑一遍完整取址链：远程方式先行
+// 远程签名取址、本地全链兜底；本地方式只跑本地全链。
+func (c *Client) resolvePlaybackChain(ctx context.Context, episodeID string, mode int32) (*model.Playback, error) {
 	return withFreshDevice(ctx, c, true, func(ctx context.Context) (*model.Playback, error) {
 		if !validID(episodeID) {
 			return nil, fmt.Errorf("invalid episode ID")
@@ -70,8 +94,8 @@ func (c *Client) ResolvePlayback(ctx context.Context, episodeID string, _ Playba
 		// 取到模型即返回；远程失败先记下原因，本地链照常兜底，本地也
 		// 失败时把远程的失败原因报给用户（他选的方式出了什么问题）。
 		var remoteErr error
-		if c.signingMode() != SigningModeLocal {
-			if playback, err := c.resolvePlaybackViaRemote(ctx, episodeID); playback != nil {
+		if mode != SigningModeLocal {
+			if playback, err := c.resolvePlaybackViaRemoteMode(ctx, episodeID, mode); playback != nil {
 				return playback, err
 			} else if err != nil {
 				remoteErr = err
@@ -79,6 +103,13 @@ func (c *Client) ResolvePlayback(ctx context.Context, episodeID string, _ Playba
 		}
 		if pb, err := c.playbackIdentity(ctx); err == nil {
 			if playback, err := c.resolvePlaybackViaMobileV5(ctx, pb, episodeID); playback != nil {
+				return playback, err
+			}
+			// 2026-11-20 实测：平台逐通道开关播放发放——v5 全天空返的
+			// 时段里 tab 多集仍在发放（满院亲戚/少夫人3/冒名入仕等均经
+			// 此通道拿到 5 档模型）。故 tab 多集紧随 v5，不再排在已退役
+			// 的 player/multi 之后白等。
+			if playback, err := c.resolvePlaybackViaTabMulti(ctx, pb, episodeID); playback != nil {
 				return playback, err
 			}
 		}
@@ -90,9 +121,6 @@ func (c *Client) ResolvePlayback(ctx context.Context, episodeID string, _ Playba
 				return playback, err
 			}
 			if playback, err := c.resolvePlaybackViaMultiPlayer(ctx, pb, episodeID); playback != nil {
-				return playback, err
-			}
-			if playback, err := c.resolvePlaybackViaTabMulti(ctx, pb, episodeID); playback != nil {
 				return playback, err
 			}
 			c.dropPlaybackIdentityIf(pb)

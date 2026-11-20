@@ -57,6 +57,14 @@ type Client struct {
 	// signMode 是播放取址的计算方式（见 remote_sign.go 的 SigningMode*），
 	// 由绑定层按用户设置写入；0 = 本地计算（默认）。只影响播放取址。
 	signMode atomic.Int32
+	// effSignMode 是算法策略层当前实际生效的计算方式：用户选本地且
+	// 连续取址失败时自动切到 unidbg；远程方式下探测到本地恢复后自动
+	// 切回（见 remote_sign.go 的策略层）。signMode 始终是用户显式选择。
+	effSignMode atomic.Int32
+	// localFailCount 是本地方式连续取址失败计数，本地成功即清零。
+	localFailCount atomic.Int32
+	// localProbeRunning 保证本地恢复探测同时只跑一个。
+	localProbeRunning atomic.Bool
 	// fridaMu 保护远程计算-frida 的设备档案缓存：身份由服务提供，
 	// 拉取一次缓存 60 秒（与服务方客户端的节奏一致）。
 	fridaMu      sync.Mutex

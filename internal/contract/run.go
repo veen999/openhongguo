@@ -327,8 +327,10 @@ func playSeries(ctx context.Context, client *sdk.Client, rec *recorder, cfg Conf
 
 	rec.forget(protocol.PathPlayback)
 	rec.forget(protocol.PathPlaybackMobileV5)
+	rec.forget(protocol.PathVideoTabMulti)
 	pb, err := client.ResolvePlayback(ctx, page.Items[0].ID, sdk.PlaybackOptions{})
 	rec.adoptV5Playback()
+	rec.adoptTabMultiPlayback()
 	if errors.Is(err, sdk.ErrDRMProtected) && pb != nil {
 		err = nil
 	}
@@ -528,6 +530,61 @@ func (r *recorder) adoptV5Playback() {
 		r.mu.Unlock()
 		return
 	}
+}
+
+// adoptTabMultiPlayback rewrites a recorded tab-multi playback
+// response into the singular envelope under PathPlayback, like
+// adoptV5Playback: the model sits at data.video_model_data[<episode>]
+// already shaped like the singular data object, or directly at
+// data.video_model (then the body already is the singular envelope).
+func (r *recorder) adoptTabMultiPlayback() {
+	body, ok := r.body(protocol.PathVideoTabMulti)
+	if !ok {
+		return
+	}
+	if _, ok := r.body(protocol.PathPlayback); ok {
+		return
+	}
+	var probe struct {
+		Data struct {
+			VideoModel     json.RawMessage            `json:"video_model"`
+			VideoModelData map[string]json.RawMessage `json:"video_model_data"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(body, &probe); err != nil {
+		return
+	}
+	if len(probe.Data.VideoModel) > 0 {
+		r.mu.Lock()
+		r.bodies[protocol.PathPlayback] = body
+		r.mu.Unlock()
+		return
+	}
+	var entry json.RawMessage
+	for _, v := range probe.Data.VideoModelData {
+		entry = v
+		break
+	}
+	if len(entry) == 0 {
+		return
+	}
+	root := map[string]json.RawMessage{}
+	var rawRoot map[string]json.RawMessage
+	if err := json.Unmarshal(body, &rawRoot); err == nil {
+		for k, v := range rawRoot {
+			if k != "data" {
+				root[k] = v
+			}
+		}
+	}
+	root["data"] = entry
+	wrapped, err := json.Marshal(root)
+	if err != nil {
+		return
+	}
+	r.mu.Lock()
+	r.bodies[protocol.PathPlayback] = wrapped
+	r.mu.Unlock()
 }
 
 // decode undoes the gzip content encoding the SDK also accepts.

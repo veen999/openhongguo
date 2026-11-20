@@ -37,25 +37,100 @@ var signatureHeaderNames = []string{
 
 // SetSigningMode 切换播放取址的计算方式："local"（默认）/ "unidbg" /
 // "frida"；未知取值按本地计算处理。只影响播放取址（单集与批量），
-// 目录、搜索、评论等读取不变。
+// 目录、搜索、评论等读取不变。重复下发同一选择时直接返回——设置流
+// 每次发状态都会调用本方法，无变化时不得重置策略层的自动切换状态。
 func (c *Client) SetSigningMode(mode string) {
+	var next int32 = SigningModeLocal
 	switch strings.ToLower(strings.TrimSpace(mode)) {
 	case "unidbg":
-		c.signMode.Store(SigningModeUnidbg)
+		next = SigningModeUnidbg
 	case "frida":
-		c.signMode.Store(SigningModeFrida)
-	default:
-		c.signMode.Store(SigningModeLocal)
+		next = SigningModeFrida
 	}
+	if c.signMode.Load() == next {
+		return
+	}
+	c.signMode.Store(next)
+	c.effSignMode.Store(next)
+	c.localFailCount.Store(0)
 }
 
 func (c *Client) signingMode() int32 { return c.signMode.Load() }
 
-// resolvePlaybackViaRemote 按当前计算方式走远程签名取址；本地方式或
+func (c *Client) effectiveSigningMode() int32 { return c.effSignMode.Load() }
+
+// EffectiveSigningMode 返回算法策略层当前实际生效的计算方式
+// （"local" / "unidbg" / "frida"）。它可能与用户在设置里选的不同：
+// 本地连续取址失败会自动切到 unidbg，本地恢复后会自动切回。
+func (c *Client) EffectiveSigningMode() string {
+	switch c.effectiveSigningMode() {
+	case SigningModeUnidbg:
+		return "unidbg"
+	case SigningModeFrida:
+		return "frida"
+	}
+	return "local"
+}
+
+// localFailureLimit 是本地方式连续取址失败多少次后自动切换到
+// 远程计算-unidbg（与 hongguoTV 的 PlaybackAlgorithmPolicy 一致：2 次）。
+const localFailureLimit = 2
+
+// noteLocalFailure 记录一次本地取址失败；达到阈值时把实际生效方式
+// 切到 unidbg 并返回 true，调用方应用新方式重试本次取址。
+func (c *Client) noteLocalFailure() bool {
+	if c.localFailCount.Add(1) < localFailureLimit {
+		return false
+	}
+	c.localFailCount.Store(0)
+	c.effSignMode.Store(SigningModeUnidbg)
+	return true
+}
+
+// noteResolveSuccess 处理一次取址成功后的策略动作：本地成功清零失败
+// 计数；远程成功则后台探测本地是否已恢复，恢复则切回本地（下一次
+// 取址生效）。
+func (c *Client) noteResolveSuccess(mode int32, episodeID string) {
+	if mode == SigningModeLocal {
+		c.localFailCount.Store(0)
+		return
+	}
+	c.probeLocalAsync(episodeID)
+}
+
+// probeLocalAsync 用播放身份单测 v5 通道是否恢复：只探不取，结果不
+// 用于本次播放；单飞运行；探测走内存播放身份，不触碰目录游客身份，
+// 失败不影响任何正在使用的身份。
+func (c *Client) probeLocalAsync(episodeID string) {
+	if !c.localProbeRunning.CompareAndSwap(false, true) {
+		return
+	}
+	go func() {
+		defer c.localProbeRunning.Store(false)
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		pb, err := c.playbackIdentity(ctx)
+		if err != nil {
+			return
+		}
+		if playback, _ := c.resolvePlaybackViaMobileV5(ctx, pb, episodeID); playback != nil {
+			c.effSignMode.Store(SigningModeLocal)
+			c.localFailCount.Store(0)
+		}
+	}()
+}
+
+// resolvePlaybackViaRemote 按用户所选计算方式走远程签名取址；本地方式或
 // 远程未取到模型时返回 (nil, nil)，错误只在远程链路本身失败时返回，
 // 供 ResolvePlayback 在本地链也失败时把远程失败原因报给用户。
 func (c *Client) resolvePlaybackViaRemote(ctx context.Context, episodeID string) (*model.Playback, error) {
-	switch c.signingMode() {
+	return c.resolvePlaybackViaRemoteMode(ctx, episodeID, c.signingMode())
+}
+
+// resolvePlaybackViaRemoteMode 按给定计算方式走远程签名取址（策略层
+// 自动切换时用它按实际生效方式取址）。
+func (c *Client) resolvePlaybackViaRemoteMode(ctx context.Context, episodeID string, mode int32) (*model.Playback, error) {
+	switch mode {
 	case SigningModeUnidbg:
 		return c.resolvePlaybackViaUnidbg(ctx, episodeID)
 	case SigningModeFrida:
