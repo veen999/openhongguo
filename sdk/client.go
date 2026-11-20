@@ -112,7 +112,7 @@ func NewClient(opts Options) (*Client, error) {
 	if err := opts.Device.Validate(); err != nil {
 		return nil, fmt.Errorf("%w: %v", ErrInvalidOptions, err)
 	}
-	return &Client{
+	c := &Client{
 		device:        opts.Device.OrDefault(),
 		retryAttempts: attempts,
 		deviceResets:  resets,
@@ -120,7 +120,11 @@ func NewClient(opts Options) (*Client, error) {
 		signer: opts.Signer, authProvider: opts.AuthProvider,
 		logger: opts.Logger, clock: opts.Clock,
 		apiOrigin: api, registerOrigin: reg, distOrigin: dist,
-	}, nil
+	}
+	// 远程计算-unidbg 的传输层重签（见 resign_transport.go）：包装后
+	// 按客户端当前实际生效方式逐请求决定是否重签，非 unidbg 时透传。
+	c.transport = &resignTransport{next: opts.Transport, client: c}
+	return c, nil
 }
 
 func (c *Client) do(ctx context.Context, method, origin, path string, query url.Values, headers map[string]string, body []byte) ([]byte, map[string]string, error) {

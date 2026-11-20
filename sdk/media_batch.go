@@ -33,9 +33,10 @@ func (c *Client) ResolvePlaybackBatch(ctx context.Context, ids []string) (map[st
 	if len(uniq) == 0 {
 		return playbacks, errs
 	}
-	// 远程计算方式没有批量签名协议：逐集走单集解析（其内部同样是
-	// 远程优先、本地兜底），结果按同一口径分桶。
-	if c.effectiveSigningMode() != SigningModeLocal {
+	// frida 方式没有批量签名协议：逐集走单集解析（其内部同样是
+	// 远程优先、本地兜底），结果按同一口径分桶。unidbg 方式走批量
+	// v5 POST，传输层会像单集一样对它重签，不必降级。
+	if c.effectiveSigningMode() == SigningModeFrida {
 		for _, id := range uniq {
 			pb, err := c.ResolvePlayback(ctx, id, PlaybackOptions{})
 			if pb != nil {

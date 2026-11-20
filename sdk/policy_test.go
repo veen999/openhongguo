@@ -32,7 +32,16 @@ func (f *policyFake) handler(req *Request) (*Response, error) {
 		return &Response{StatusCode: 200, Headers: map[string]string{},
 			Body: []byte(`{"headers":` + sixHeadersJSON + `}`)}, nil
 	case strings.Contains(url, "multi_video_model/player/v1"):
-		if f.serveV5.Load() {
+		// 服务重签后的 v5 请求带占位 medusa（"m"）：对其发模型，模拟
+		// 本地签名被平台拒发、远程签名可发的情形；serveV5 置位则模拟
+		// 本地通道恢复，本地签名的请求也发模型。
+		medusa := ""
+		for k, v := range req.Headers {
+			if strings.EqualFold(k, "x-medusa") {
+				medusa = v
+			}
+		}
+		if f.serveV5.Load() || medusa == "m" {
 			raw, err := os.ReadFile(filepath.Join("..", "testdata", "protocol", "drm-playback-v5.json"))
 			if err != nil {
 				return nil, err
@@ -41,13 +50,6 @@ func (f *policyFake) handler(req *Request) (*Response, error) {
 		}
 		return &Response{StatusCode: 200, Headers: map[string]string{}}, nil
 	case strings.Contains(url, "video_tab/video_model"):
-		// 远程签名的 tab 请求带服务返回的占位 medusa（"m"）；本地签名
-		// 的 medusa 是长串。只对远程请求发模型，模拟本地链全空。
-		for k, v := range req.Headers {
-			if strings.EqualFold(k, "x-medusa") && v == "m" {
-				return &Response{StatusCode: 200, Headers: map[string]string{}, Body: []byte(tabModelJSON)}, nil
-			}
-		}
 		return &Response{StatusCode: 200, Headers: map[string]string{}}, nil
 	}
 	return &Response{StatusCode: 200, Headers: map[string]string{}}, nil

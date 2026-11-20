@@ -90,11 +90,13 @@ func (c *Client) resolvePlaybackChain(ctx context.Context, episodeID string, mod
 		// is the chain that issues (see resolvePlaybackViaMobileV5).
 		// The older channels stay behind it as fallbacks in case the
 		// platform rolls back.
-		// 用户选了远程计算方式时先走远程签名取址（见 remote_sign.go）：
+		// frida 方式（服务自带身份）先走远程签名取址（见 remote_sign.go）：
 		// 取到模型即返回；远程失败先记下原因，本地链照常兜底，本地也
 		// 失败时把远程的失败原因报给用户（他选的方式出了什么问题）。
+		// unidbg 方式不在这里分流：它由传输层对本链的播放请求统一重签
+		//（见 resign_transport.go），链本身与本地完全一致。
 		var remoteErr error
-		if mode != SigningModeLocal {
+		if mode == SigningModeFrida {
 			if playback, err := c.resolvePlaybackViaRemoteMode(ctx, episodeID, mode); playback != nil {
 				return playback, err
 			} else if err != nil {

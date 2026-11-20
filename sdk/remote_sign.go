@@ -15,10 +15,12 @@ import (
 )
 
 // 播放取址的计算方式（签名来源）。本地计算是默认与根基；两种远程计算
-// 是 hongguoTV 公开客户端内置的第三方签名服务，本包按其公开协议接入：
-// unidbg 服务只算签名、身份仍是本机目录游客；frida 服务自带一台真机
-// 身份，身份与签名都由服务提供。两种远程方式都走 video_tab 单集取址
-// （服务方客户端的实测结论：该通道对匿名设备最宽容）。
+// 是公开客户端内置的第三方签名服务，本包按其公开协议接入：
+// unidbg 服务只算签名、身份仍是本机身份——接入形态与上游 openhongguo
+// v0.4.0 的 SignerURL 机制一致：本地链照常构造播放请求，发出前由传输
+// 层把签名头整体换成服务算出的签名（见 resign_transport.go）；
+// frida 服务自带一台真机身份，身份与签名都由服务提供，走 video_tab
+// 单集取址（见 resolvePlaybackViaFrida）。
 const (
 	SigningModeLocal  = 0
 	SigningModeUnidbg = 1
@@ -109,6 +111,9 @@ func (c *Client) probeLocalAsync(episodeID string) {
 		defer c.localProbeRunning.Store(false)
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
+		// 探活测的是本地签名：绕过传输层重签，否则远程签名会把探活
+		// 请求也签成远程的，本地没恢复也会误判为已恢复。
+		ctx = withResignBypass(ctx)
 		pb, err := c.playbackIdentity(ctx)
 		if err != nil {
 			return
@@ -128,12 +133,10 @@ func (c *Client) resolvePlaybackViaRemote(ctx context.Context, episodeID string)
 }
 
 // resolvePlaybackViaRemoteMode 按给定计算方式走远程签名取址（策略层
-// 自动切换时用它按实际生效方式取址）。
+// 自动切换时用它按实际生效方式取址）。只有 frida 在这一层分流；
+// unidbg 由传输层重签本链请求（resign_transport.go），不经这里。
 func (c *Client) resolvePlaybackViaRemoteMode(ctx context.Context, episodeID string, mode int32) (*model.Playback, error) {
-	switch mode {
-	case SigningModeUnidbg:
-		return c.resolvePlaybackViaUnidbg(ctx, episodeID)
-	case SigningModeFrida:
+	if mode == SigningModeFrida {
 		return c.resolvePlaybackViaFrida(ctx, episodeID)
 	}
 	return nil, nil
@@ -149,45 +152,6 @@ func parseTabPlayback(raw []byte, episodeID string) (*model.Playback, error) {
 		return playback, ErrDRMProtected
 	}
 	return playback, nil
-}
-
-// resolvePlaybackViaUnidbg：本机身份 + 远程算签名。取址 URL 与本地
-// tab 通道逐字一致（SignedVideoTabPairs + ts/_rticket），只是六个
-// 签名头不由本机算法生成，而是把完整 URL 交给 unidbg 服务计算。
-func (c *Client) resolvePlaybackViaUnidbg(ctx context.Context, episodeID string) (*model.Playback, error) {
-	p, err := c.ensureSearchGuest(ctx)
-	if err != nil {
-		return nil, err
-	}
-	ticket := c.clock().UnixMilli()
-	pairs := append(protocol.SignedVideoTabPairs(c.identity(p), episodeID),
-		[2]string{"ts", strconv.FormatInt(ticket/1000, 10)},
-		[2]string{"_rticket", strconv.FormatInt(ticket, 10)})
-	fullURL := c.apiOrigin + protocol.PathVideoTabModel + "?" + encodeRemoteQuery(pairs)
-	sigs, err := c.unidbgSign(ctx, fullURL)
-	if err != nil {
-		return nil, err
-	}
-	raw, _, err := c.doRaw(ctx, "GET", fullURL, anonymousHeaders(c, p, ticket, sigs), nil)
-	if err != nil {
-		return nil, err
-	}
-	return parseTabPlayback(raw, episodeID)
-}
-
-// unidbgSign 调用 openhongguo-signer 的 POST /feature-hash：
-// 请求 {"url": 完整待签 URL}，返回 {"headers": {六个签名头}}。
-func (c *Client) unidbgSign(ctx context.Context, fullURL string) (map[string]string, error) {
-	payload, _ := json.Marshal(map[string]string{"url": fullURL})
-	root, err := c.signerServiceJSON(ctx, "POST", unidbgSignerEndpoint+"/feature-hash", payload, "远程计算-unidbg")
-	if err != nil {
-		return nil, err
-	}
-	headersObj, ok := root["headers"].(map[string]any)
-	if !ok {
-		return nil, errors.New("远程计算-unidbg 未返回签名头")
-	}
-	return extractSignatureHeaders(headersObj, "远程计算-unidbg")
 }
 
 // fridaServiceProfile 是 frida 服务自带的设备档案（GET /info）。

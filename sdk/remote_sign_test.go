@@ -43,51 +43,6 @@ func jsonResponse(status int, v any) *Response {
 
 const sixHeadersJSON = `{"X-Gorgon":"g","X-Khronos":"123","X-Argus":"a","X-Ladon":"l","X-Medusa":"m","X-Helios":"h"}`
 
-func TestUnidbgSignReturnsAllHeaders(t *testing.T) {
-	var gotURL string
-	c := remoteTestClient(t, func(req *Request) (*Response, error) {
-		if !strings.Contains(req.URL, "feature-hash") {
-			t.Errorf("unexpected url %s", req.URL)
-		}
-		var payload map[string]string
-		if err := json.Unmarshal(req.Body, &payload); err != nil {
-			t.Fatal(err)
-		}
-		gotURL = payload["url"]
-		return &Response{StatusCode: 200, Headers: map[string]string{}, Body: []byte(`{"headers":` + sixHeadersJSON + `}`)}, nil
-	})
-	sigs, err := c.unidbgSign(context.Background(), "https://example.com/tab?video_id=1")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if gotURL != "https://example.com/tab?video_id=1" {
-		t.Errorf("payload url = %q", gotURL)
-	}
-	if len(sigs) != 6 || sigs["x-medusa"] != "m" || sigs["x-gorgon"] != "g" {
-		t.Errorf("sigs = %v", sigs)
-	}
-}
-
-func TestUnidbgSignRejectsIncompleteHeaders(t *testing.T) {
-	c := remoteTestClient(t, func(req *Request) (*Response, error) {
-		return &Response{StatusCode: 200, Headers: map[string]string{}, Body: []byte(`{"headers":{"X-Argus":"a"}}`)}, nil
-	})
-	if _, err := c.unidbgSign(context.Background(), "https://example.com/x"); err == nil ||
-		!strings.Contains(err.Error(), "未返回完整签名") {
-		t.Errorf("err = %v", err)
-	}
-}
-
-func TestUnidbgSignSurfacesServiceError(t *testing.T) {
-	c := remoteTestClient(t, func(req *Request) (*Response, error) {
-		return jsonResponse(500, map[string]string{"error": "signer busy"}), nil
-	})
-	if _, err := c.unidbgSign(context.Background(), "https://example.com/x"); err == nil ||
-		!strings.Contains(err.Error(), "signer busy") {
-		t.Errorf("err = %v", err)
-	}
-}
-
 func TestFridaProfileAndSign(t *testing.T) {
 	c := remoteTestClient(t, func(req *Request) (*Response, error) {
 		switch {
