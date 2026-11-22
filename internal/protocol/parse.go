@@ -2334,6 +2334,69 @@ func ParsePanelCommentList(raw []byte) (*PanelCommentListResult, error) {
 	return out, nil
 }
 
+// ParseReplyList parses a reply/list response (the 二级评论 stream behind
+// one comment, live-captured 2026-11-22). The envelope differs from the
+// panel stream: items live at data.reply_list with the common block under
+// a capital-C "Common" key and the item id at reply_id; paging info lives
+// at data.comment_list_info with a plain offset cursor and an explicit
+// total. Items reuse the panel item model.
+func ParseReplyList(raw []byte) (*PanelCommentListResult, error) {
+	var env struct {
+		Code flexString `json:"code"`
+		Data struct {
+			List []struct {
+				ReplyID flexString `json:"reply_id"`
+				Common  struct {
+					CreateTimestamp flexInt64 `json:"create_timestamp"`
+					Content         struct {
+						Text string `json:"text"`
+					} `json:"content"`
+					UserInfo struct {
+						UserID   flexString      `json:"user_id"`
+						BaseInfo json.RawMessage `json:"base_info"`
+					} `json:"user_info"`
+				} `json:"Common"`
+				Stat struct {
+					DiggCount  flexInt64 `json:"digg_count"`
+					ReplyCount flexInt64 `json:"reply_count"`
+				} `json:"stat"`
+			} `json:"reply_list"`
+			Info struct {
+				Cursor  string    `json:"cursor"`
+				HasMore bool      `json:"has_more"`
+				Total   flexInt64 `json:"total"`
+			} `json:"comment_list_info"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(raw, &env); err != nil {
+		return nil, err
+	}
+	if env.Code.String() != "" && env.Code.String() != "0" {
+		return nil, fmt.Errorf("reply list code %s", env.Code.String())
+	}
+	out := &PanelCommentListResult{Items: []model.CommentPanelItem{}}
+	out.Cursor = env.Data.Info.Cursor
+	out.HasMore = env.Data.Info.HasMore
+	out.Total = int(env.Data.Info.Total)
+	for _, row := range env.Data.List {
+		if row.Common.Content.Text == "" {
+			continue
+		}
+		nick, avatar := panelBaseInfo(row.Common.UserInfo.BaseInfo)
+		out.Items = append(out.Items, model.CommentPanelItem{
+			ID:              row.ReplyID.String(),
+			Text:            row.Common.Content.Text,
+			UserID:          row.Common.UserInfo.UserID.String(),
+			Nickname:        nick,
+			Avatar:          avatar,
+			DiggCount:       int64(row.Stat.DiggCount),
+			ReplyCount:      int64(row.Stat.ReplyCount),
+			CreateTimestamp: int64(row.Common.CreateTimestamp),
+		})
+	}
+	return out, nil
+}
+
 // panelBaseInfo extracts nickname and avatar URL from a comment item's
 // user_info.base_info object. The danmaku stream ships this object empty;
 // the panel stream populates it. Avatar may be a plain URL string or an

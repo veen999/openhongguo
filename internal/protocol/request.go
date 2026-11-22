@@ -660,6 +660,42 @@ func PanelCommentListBody(episodeID, seriesID string, cursor string, count int) 
 	})
 }
 
+// ReplyListBody is the getReplyList body (decompiled from the official
+// 7.4.5.16 APK 2026-11-22: tt2.c BizGetReplyListRequest — commentSource,
+// serverChannel, commentID, commentType, groupID, groupType, businessParam,
+// count, cursor, appID, complianceStatus; the video-comment ViewModel's
+// expand_reply flow fills it via ku2.v.i + source NovelItemReply=504, then
+// overrides commentID with the parent comment's id and cursor with the
+// per-comment reply cursor). For a series episode: channel NovelItemList=18,
+// comment_type NewItem=4, group_id=episode vid, group_type SeriesVideo=30,
+// business_param carries only book_id=series_id (yy6.e4 with need_count
+// false). The request rides the dedicated reply/list route with the
+// COMMENT id as the path parameter.
+func ReplyListBody(commentID, episodeID, seriesID string, cursor string, count int) ([]byte, error) {
+	aid, err := strconv.Atoi(AID)
+	if err != nil {
+		return nil, err
+	}
+	if count <= 0 {
+		count = 10
+	}
+	return jsonMarshal(map[string]any{
+		"comment_source": 504,
+		"server_channel": 18,
+		"comment_id":     commentID,
+		"comment_type":   4,
+		"group_id":       episodeID,
+		"group_type":     30,
+		"business_param": map[string]any{
+			"book_id": seriesID,
+		},
+		"count":             count,
+		"cursor":            cursor,
+		"aid":               aid,
+		"compliance_status": 0,
+	})
+}
+
 // SignedCategoryPairs is the ordered category-page query.
 func SignedCategoryPairs(id SearchIdentity, categoryID string, offset, count int) [][2]string {
 	return append(DeviceQueryPairs(id),

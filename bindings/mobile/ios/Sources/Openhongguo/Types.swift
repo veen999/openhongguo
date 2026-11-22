@@ -2329,3 +2329,15 @@ public struct PanelCommentOptions: Encodable, Hashable, Sendable {
         self.count = count
     }
 }
+
+/// ReplyCommentOptions 是二级回复流的一页请求。Cursor 是上一页给出的
+/// 游标（首页为空）；Count 是每页条数（<=0 时用官方默认 10）。
+public struct ReplyCommentOptions: Encodable, Hashable, Sendable {
+    public var cursor: String?
+    public var count: Int?
+
+    public init(cursor: String? = nil, count: Int? = nil) {
+        self.cursor = cursor
+        self.count = count
+    }
+}

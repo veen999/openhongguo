@@ -95,6 +95,11 @@ const (
 	// PathDanmaku is the comment list the player's 弹幕 layer reads; %s is
 	// the episode id (observed 2026-11-11). 与 PathCommentList 同一路由。
 	PathDanmaku = "/novel/commentapi/comment/list/%s/v1/"
+	// PathCommentReplyList is the reply （二级评论） stream behind one
+	// comment; %s is the parent comment id. Route string read from the
+	// official APK's RPC stub (classes10.dex: "POST /novel/commentapi/
+	// reply/list/:comment_id/v1/"), live-verified 2026-11-22.
+	PathCommentReplyList = "/novel/commentapi/reply/list/%s/v1/"
 	// DefaultRankCell is the bookmall cell the 经典 channel serves for the
 	// ranking page (observed: algo 179 推荐榜).
 	DefaultRankCell = "7224069876808155173"

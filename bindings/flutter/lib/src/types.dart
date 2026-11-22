@@ -2472,3 +2472,20 @@ class PanelCommentOptions {
         if (count != null) 'count': count!,
       };
 }
+
+/// ReplyCommentOptions 是二级回复流的一页请求。Cursor 是上一页给出的
+/// 游标（首页为空）；Count 是每页条数（<=0 时用官方默认 10）。
+class ReplyCommentOptions {
+  final String? cursor;
+  final int? count;
+
+  const ReplyCommentOptions({this.cursor, this.count});
+
+  ReplyCommentOptions copyWith({String? cursor, int? count}) =>
+      ReplyCommentOptions(cursor: cursor ?? this.cursor, count: count ?? this.count);
+
+  Map<String, dynamic> toJson() => {
+        if (cursor != null) 'cursor': cursor!,
+        if (count != null) 'count': count!,
+      };
+}

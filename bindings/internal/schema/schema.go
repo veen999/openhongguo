@@ -23,7 +23,7 @@ import (
 var QueryTypes = []string{
 	"DiscoverOptions", "SearchOptions", "EpisodeOptions", "DanmakuOptions", "LandingOptions",
 	"NewReleaseQuery", "ShortFilterQuery", "ShortRankQuery", "CommentOptions",
-	"PanelCommentOptions",
+	"PanelCommentOptions", "ReplyCommentOptions",
 }
 
 // Kind 是类型引用的种类。

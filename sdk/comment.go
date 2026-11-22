@@ -120,3 +120,56 @@ func (c *Client) CommentPanelList(ctx context.Context, episodeID, seriesID strin
 		}, nil
 	})
 }
+
+// ReplyCommentOptions 是二级回复流的一页请求。Cursor 是上一页给出的
+// 游标（首页为空）；Count 是每页条数（<=0 时用官方默认 10）。
+type ReplyCommentOptions struct {
+	Cursor string
+	Count  int
+}
+
+// CommentReplyList 加载一条评论的二级回复（官方 App 点「展开 N 条回复」
+// 时的请求）：专用 reply/list 路由、路径参数为父评论 id，body 是
+// BizGetReplyListRequest 形状（comment_source=504
+// NovelItemReply、server_channel=18、comment_type=4、group_id=分集 id、
+// group_type=30、business_param 只带 book_id）。返回形状与面板流相同
+// （条目带昵称、头像、发布时间、点赞数），复用面板解析。翻页由调用方
+// 把返回的 Cursor 填回 ReplyCommentOptions 继续调用。
+func (c *Client) CommentReplyList(ctx context.Context, commentID, episodeID, seriesID string, opts ReplyCommentOptions) (*model.CommentPanelPage, error) {
+	return withFreshDevice(ctx, c, false, func(ctx context.Context) (*model.CommentPanelPage, error) {
+		if !validID(commentID) {
+			return nil, fmt.Errorf("invalid comment ID")
+		}
+		if !validID(episodeID) {
+			return nil, fmt.Errorf("invalid episode ID")
+		}
+		if strings.TrimSpace(seriesID) == "" || strings.TrimSpace(seriesID) == "0" || !validID(seriesID) {
+			return nil, fmt.Errorf("invalid series ID: reply list needs the real series ID as book_id")
+		}
+		body, err := protocol.ReplyListBody(commentID, episodeID, seriesID, opts.Cursor, opts.Count)
+		if err != nil {
+			return nil, err
+		}
+		p, err := c.ensureSearchGuest(ctx)
+		if err != nil {
+			return nil, err
+		}
+		path := fmt.Sprintf(protocol.PathCommentReplyList, commentID)
+		ticket := c.clock().UnixMilli()
+		rawQuery, headers := sign.SignPOST(path, protocol.DeviceQueryPairs(c.identity(p)), ticket, p.DeviceID, protocol.VersionName, body, nil)
+		raw, _, err := c.doRaw(ctx, "POST", c.apiOrigin+path+"?"+rawQuery, anonymousHeaders(c, p, ticket, headers), body)
+		if err != nil {
+			return nil, err
+		}
+		res, err := protocol.ParseReplyList(raw)
+		if err != nil {
+			return nil, err
+		}
+		return &model.CommentPanelPage{
+			Items:   res.Items,
+			Cursor:  res.Cursor,
+			HasMore: res.HasMore,
+			Total:   res.Total,
+		}, nil
+	})
+}

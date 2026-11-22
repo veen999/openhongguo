@@ -2131,3 +2131,17 @@ data class PanelCommentOptions(
         count?.let { put("count", it) }
     }
 }
+
+/**
+ * ReplyCommentOptions 是二级回复流的一页请求。Cursor 是上一页给出的
+ * 游标（首页为空）；Count 是每页条数（<=0 时用官方默认 10）。
+ */
+data class ReplyCommentOptions(
+    val cursor: String? = null,
+    val count: Int? = null,
+) {
+    internal fun toJson(): JSONObject = JSONObject().apply {
+        cursor?.let { put("cursor", it) }
+        count?.let { put("count", it) }
+    }
+}
