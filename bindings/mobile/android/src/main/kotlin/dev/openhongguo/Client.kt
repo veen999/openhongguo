@@ -244,6 +244,14 @@ class OpenhongguoClient internal constructor(private val engine: Engine) {
         return BatchPlaybackResult(results, errors)
     }
 
+    /** 启动健康探测：并发试一遍全部本地取址通道，结果记入 SDK 的通道健康表（活通道成为首选、死通道冷却），返回各通道当前是否可用。 */
+    suspend fun probePlaybackChannels(): Map<String, Boolean> {
+        val o = call("probePlaybackChannels").asObject()
+        val out = LinkedHashMap<String, Boolean>()
+        for (k in o.keys()) out[k] = o.optBoolean(k)
+        return out
+    }
+
     /** 一章有声书的播放模型；加密章节同时给出内容密钥。按章单独取模，不要批量。 */
     suspend fun audioPlayback(bookId: String, itemId: String, toneId: Int = 0): PlaybackResult {
         val o = call("audioPlayback", bookId, itemId, toneId).asObject()

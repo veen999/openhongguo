@@ -245,6 +245,9 @@ var methods = map[string]method{
 	"effectiveSigningMode": func(ctx context.Context, c *sdk.Client, a []json.RawMessage) (any, error) {
 		return c.EffectiveSigningMode(), nil
 	},
+	"probePlaybackChannels": func(ctx context.Context, c *sdk.Client, a []json.RawMessage) (any, error) {
+		return c.ProbePlaybackChannels(ctx), nil
+	},
 	"resolvePlaybackBatch": func(ctx context.Context, c *sdk.Client, a []json.RawMessage) (any, error) {
 		var ids []string
 		if err := arg(a, 0, &ids); err != nil {
