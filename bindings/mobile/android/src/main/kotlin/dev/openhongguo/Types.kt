@@ -180,6 +180,81 @@ data class CommentPage(
 }
 
 /**
+ * CommentPanelItem 是官方评论面板流里的一条评论：带评论 id、作者昵称与
+ * 头像、点赞数、回复数与发布时间（Unix 秒）。与 CommentItem（弹幕流派生，
+ * 无昵称/头像、服务端采样）是两条不同的流，见 Client.CommentPanelList。
+ */
+data class CommentPanelItem(
+    val id: String = "",
+    val text: String = "",
+    val userId: String = "",
+    val nickname: String = "",
+    val avatar: String = "",
+    val diggCount: Long = 0L,
+    val replyCount: Long = 0L,
+    val createTimestamp: Long = 0L,
+    val offsetMs: Long = 0L,
+) {
+    /** 编码成与 Go SDK 相同的 JSON。 */
+    fun toJson(): JSONObject = JSONObject().apply {
+        put("id", id)
+        put("text", text)
+        put("user_id", userId)
+        put("nickname", nickname)
+        put("avatar", avatar)
+        put("digg_count", diggCount)
+        put("reply_count", replyCount)
+        put("create_timestamp", createTimestamp)
+        put("offset_ms", offsetMs)
+    }
+
+    companion object {
+        /** 从 Go SDK 输出的 JSON 解码；缺省的字段取零值。 */
+        fun fromJson(o: JSONObject): CommentPanelItem = CommentPanelItem(
+            id = o.opt("id").asString(),
+            text = o.opt("text").asString(),
+            userId = o.opt("user_id").asString(),
+            nickname = o.opt("nickname").asString(),
+            avatar = o.opt("avatar").asString(),
+            diggCount = o.opt("digg_count").asLong(),
+            replyCount = o.opt("reply_count").asLong(),
+            createTimestamp = o.opt("create_timestamp").asLong(),
+            offsetMs = o.opt("offset_ms").asLong(),
+        )
+    }
+}
+
+/**
+ * CommentPanelPage 是评论面板流的一页。Cursor 传回
+ * PanelCommentOptions 继续翻页，HasMore 为假即到底。Total 是
+ * need_count 请求回的评论总数，服务端未给时为 0。
+ */
+data class CommentPanelPage(
+    val items: List<CommentPanelItem> = emptyList(),
+    val cursor: String = "",
+    val hasMore: Boolean = false,
+    val total: Int = 0,
+) {
+    /** 编码成与 Go SDK 相同的 JSON。 */
+    fun toJson(): JSONObject = JSONObject().apply {
+        put("items", JSONArray(items.map { it.toJson() }))
+        put("cursor", cursor)
+        put("has_more", hasMore)
+        put("total", total)
+    }
+
+    companion object {
+        /** 从 Go SDK 输出的 JSON 解码；缺省的字段取零值。 */
+        fun fromJson(o: JSONObject): CommentPanelPage = CommentPanelPage(
+            items = o.opt("items").asList { CommentPanelItem.fromJson(it.asObject()) },
+            cursor = o.opt("cursor").asString(),
+            hasMore = o.opt("has_more").asBoolean(),
+            total = o.opt("total").asInt(),
+        )
+    }
+}
+
+/**
  * ContentKey 是受保护播放模型的 CENC（cenc-aes-ctr）内容密钥，
  * 由 sdk.ContentKey 还原。
  */
@@ -1730,6 +1805,48 @@ data class Suggestion(
     }
 }
 
+/** ToneEntry 是音色表里的一条可选音色。 */
+data class ToneEntry(
+    /** ID 是 TTS 音色 id（>0）；真人主播条目为 0。 */
+    val id: Int = 0,
+    /** Title 是展示名：TTS 如「成熟大叔音升级版」，真人如「主播：海风飨风林」。 */
+    val title: String = "",
+    /** Description 是 TTS 音色的风格短描述（如「超自然」），真人条目为空。 */
+    val description: String = "",
+    /** Badge 是 TTS 音色的角标（如「多角色」），无角标时为空。 */
+    val badge: String = "",
+    /**
+     * Human 表示真人主播条目：收听它要切到 ABookID 那本有声书以
+     * tone_id=0 播放（章节按序号与小说对齐）。TTS 条目为 false，
+     * 直接在小说 id 上以 tone_id=ID 播放。
+     */
+    val human: Boolean = false,
+    /** ABookID 是真人主播的有声书 id；TTS 条目为空。 */
+    val abookId: String = "",
+) {
+    /** 编码成与 Go SDK 相同的 JSON。 */
+    fun toJson(): JSONObject = JSONObject().apply {
+        put("id", id)
+        put("title", title)
+        put("description", description)
+        put("badge", badge)
+        put("human", human)
+        put("abook_id", abookId)
+    }
+
+    companion object {
+        /** 从 Go SDK 输出的 JSON 解码；缺省的字段取零值。 */
+        fun fromJson(o: JSONObject): ToneEntry = ToneEntry(
+            id = o.opt("id").asInt(),
+            title = o.opt("title").asString(),
+            description = o.opt("description").asString(),
+            badge = o.opt("badge").asString(),
+            human = o.opt("human").asBoolean(),
+            abookId = o.opt("abook_id").asString(),
+        )
+    }
+}
+
 /**
  * ToneInfo 是有声书的音色信息：这本书是否有可播的音色，
  * 以及（当本书本身是有声书时）它对应的小说 book_id。
@@ -1749,6 +1866,13 @@ data class ToneInfo(
     val recommendTone: Int = 0,
     /** TTSToneIDs 是本书可用的 TTS 音色 id 列表（tts_tones）。 */
     val ttsToneIds: List<Int> = emptyList(),
+    /**
+     * Tones 是完整的音色表（真人主播在前、TTS 在后），带名称，供
+     * 调用方做音色选择。注意音色表要查「小说 id」的那份：小说的真人
+     * 主播是独立的有声书（ABookID），TTS 音色挂在小说 id 下；有声书
+     * 自身的音色表里 audio_tones 只含它自己。
+     */
+    val tones: List<ToneEntry> = emptyList(),
 ) {
     /** 编码成与 Go SDK 相同的 JSON。 */
     fun toJson(): JSONObject = JSONObject().apply {
@@ -1757,6 +1881,7 @@ data class ToneInfo(
         put("has_audio_tones", hasAudioTones)
         put("recommend_tone", recommendTone)
         put("tts_tone_ids", JSONArray(ttsToneIds))
+        put("tones", JSONArray(tones.map { it.toJson() }))
     }
 
     companion object {
@@ -1767,6 +1892,7 @@ data class ToneInfo(
             hasAudioTones = o.opt("has_audio_tones").asBoolean(),
             recommendTone = o.opt("recommend_tone").asInt(),
             ttsToneIds = o.opt("tts_tone_ids").asList { it.asInt() },
+            tones = o.opt("tones").asList { ToneEntry.fromJson(it.asObject()) },
         )
     }
 }
@@ -1989,5 +2115,19 @@ data class CommentOptions(
         startOffsetMs?.let { put("startOffsetMs", it) }
         cursor?.let { put("cursor", it) }
         durationMs?.let { put("durationMs", it) }
+    }
+}
+
+/**
+ * PanelCommentOptions 是评论面板流的一页请求。Cursor 是上一页给出的
+ * 游标（首页为空）；Count 是每页条数（<=0 时用官方默认 10）。
+ */
+data class PanelCommentOptions(
+    val cursor: String? = null,
+    val count: Int? = null,
+) {
+    internal fun toJson(): JSONObject = JSONObject().apply {
+        cursor?.let { put("cursor", it) }
+        count?.let { put("count", it) }
     }
 }

@@ -203,6 +203,20 @@ var methods = map[string]method{
 		}
 		return c.CommentList(ctx, episodeID, seriesID, o)
 	},
+	"commentPanelList": func(ctx context.Context, c *sdk.Client, a []json.RawMessage) (any, error) {
+		var episodeID, seriesID string
+		var o sdk.PanelCommentOptions
+		if err := arg(a, 0, &episodeID); err != nil {
+			return nil, err
+		}
+		if err := arg(a, 1, &seriesID); err != nil {
+			return nil, err
+		}
+		if err := arg(a, 2, &o); err != nil {
+			return nil, err
+		}
+		return c.CommentPanelList(ctx, episodeID, seriesID, o)
+	},
 	"categories": oneString(func(ctx context.Context, c *sdk.Client, id string) (any, error) { return c.Categories(ctx, id) }),
 	"categoryLanding": func(ctx context.Context, c *sdk.Client, a []json.RawMessage) (any, error) {
 		var id string

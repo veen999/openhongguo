@@ -68,3 +68,55 @@ func (c *Client) CommentList(ctx context.Context, episodeID, seriesID string, op
 		}, nil
 	})
 }
+
+// PanelCommentOptions 是评论面板流的一页请求。Cursor 是上一页给出的
+// 游标（首页为空）；Count 是每页条数（<=0 时用官方默认 10）。
+type PanelCommentOptions struct {
+	Cursor string
+	Count  int
+}
+
+// CommentPanelList 加载一集的官方评论面板流：与 CommentList 是同一条
+// comment/list 路由的两种请求形状——CommentList 是弹幕形状（服务端采样、
+// 条目不带昵称头像），本方法是官方 App 评论面板的形状（comment_source=4
+// NovelItemComment、server_channel=18 NovelItemList、comment_type=4
+// NewItem、sort=1 SmartHot，business_param 带 need_count 与
+// req_type=video_innerflow；参数形状与枚举值 2026-11-22 反编译官方
+// 7.4.5.16 得出）。返回的条目带昵称、头像、发布时间与回复数。翻页由
+// 调用方把返回的 Cursor 填回 PanelCommentOptions 继续调用，HasMore
+// 为假即到底。
+func (c *Client) CommentPanelList(ctx context.Context, episodeID, seriesID string, opts PanelCommentOptions) (*model.CommentPanelPage, error) {
+	return withFreshDevice(ctx, c, false, func(ctx context.Context) (*model.CommentPanelPage, error) {
+		if !validID(episodeID) {
+			return nil, fmt.Errorf("invalid episode ID")
+		}
+		if strings.TrimSpace(seriesID) == "" || strings.TrimSpace(seriesID) == "0" || !validID(seriesID) {
+			return nil, fmt.Errorf("invalid series ID: panel comment list needs the real series ID as book_id")
+		}
+		body, err := protocol.PanelCommentListBody(episodeID, seriesID, opts.Cursor, opts.Count)
+		if err != nil {
+			return nil, err
+		}
+		p, err := c.ensureSearchGuest(ctx)
+		if err != nil {
+			return nil, err
+		}
+		path := fmt.Sprintf(protocol.PathCommentList, episodeID)
+		ticket := c.clock().UnixMilli()
+		rawQuery, headers := sign.SignPOST(path, protocol.DeviceQueryPairs(c.identity(p)), ticket, p.DeviceID, protocol.VersionName, body, nil)
+		raw, _, err := c.doRaw(ctx, "POST", c.apiOrigin+path+"?"+rawQuery, anonymousHeaders(c, p, ticket, headers), body)
+		if err != nil {
+			return nil, err
+		}
+		res, err := protocol.ParsePanelCommentList(raw)
+		if err != nil {
+			return nil, err
+		}
+		return &model.CommentPanelPage{
+			Items:   res.Items,
+			Cursor:  res.Cursor,
+			HasMore: res.HasMore,
+			Total:   res.Total,
+		}, nil
+	})
+}

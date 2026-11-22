@@ -205,6 +205,10 @@ class OpenhongguoClient internal constructor(private val engine: Engine) {
     suspend fun commentList(episodeId: String, seriesId: String, options: CommentOptions = CommentOptions()): CommentPage =
         CommentPage.fromJson(call("commentList", episodeId, seriesId, options.toJson()).asObject())
 
+    /** 一集的官方评论面板流（带昵称/头像/时间/回复数）；翻页把上一页的 cursor 填回 options。 */
+    suspend fun commentPanelList(episodeId: String, seriesId: String, options: PanelCommentOptions = PanelCommentOptions()): CommentPanelPage =
+        CommentPanelPage.fromJson(call("commentPanelList", episodeId, seriesId, options.toJson()).asObject())
+
     /** 书籍分类的标签页。 */
     suspend fun categories(categoryId: String): CategoryPage =
         CategoryPage.fromJson(call("categories", categoryId).asObject())

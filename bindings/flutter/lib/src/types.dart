@@ -201,6 +201,92 @@ class CommentPage {
       };
 }
 
+/// CommentPanelItem 是官方评论面板流里的一条评论：带评论 id、作者昵称与
+/// 头像、点赞数、回复数与发布时间（Unix 秒）。与 CommentItem（弹幕流派生，
+/// 无昵称/头像、服务端采样）是两条不同的流，见 Client.CommentPanelList。
+class CommentPanelItem {
+  final String id;
+  final String text;
+  final String userId;
+  final String nickname;
+  final String avatar;
+  final int diggCount;
+  final int replyCount;
+  final int createTimestamp;
+  final int offsetMs;
+
+  const CommentPanelItem({
+    this.id = '',
+    this.text = '',
+    this.userId = '',
+    this.nickname = '',
+    this.avatar = '',
+    this.diggCount = 0,
+    this.replyCount = 0,
+    this.createTimestamp = 0,
+    this.offsetMs = 0,
+  });
+
+  /// 从 Go SDK 输出的 JSON 解码；缺省的字段取零值。
+  factory CommentPanelItem.fromJson(Map<String, dynamic> j) => CommentPanelItem(
+        id: _asString(j['id']),
+        text: _asString(j['text']),
+        userId: _asString(j['user_id']),
+        nickname: _asString(j['nickname']),
+        avatar: _asString(j['avatar']),
+        diggCount: _asInt(j['digg_count']),
+        replyCount: _asInt(j['reply_count']),
+        createTimestamp: _asInt(j['create_timestamp']),
+        offsetMs: _asInt(j['offset_ms']),
+      );
+
+  /// 编码成与 Go SDK 相同的 JSON。
+  Map<String, dynamic> toJson() => {
+        'id': id,
+        'text': text,
+        'user_id': userId,
+        'nickname': nickname,
+        'avatar': avatar,
+        'digg_count': diggCount,
+        'reply_count': replyCount,
+        'create_timestamp': createTimestamp,
+        'offset_ms': offsetMs,
+      };
+}
+
+/// CommentPanelPage 是评论面板流的一页。Cursor 传回
+/// PanelCommentOptions 继续翻页，HasMore 为假即到底。Total 是
+/// need_count 请求回的评论总数，服务端未给时为 0。
+class CommentPanelPage {
+  final List<CommentPanelItem> items;
+  final String cursor;
+  final bool hasMore;
+  final int total;
+
+  const CommentPanelPage({
+    this.items = const [],
+    this.cursor = '',
+    this.hasMore = false,
+    this.total = 0,
+  });
+
+  /// 从 Go SDK 输出的 JSON 解码；缺省的字段取零值。
+  factory CommentPanelPage.fromJson(Map<String, dynamic> j) => CommentPanelPage(
+        items: _asList(j['items'], (e) => CommentPanelItem.fromJson(_asMap(e))),
+        cursor: _asString(j['cursor']),
+        hasMore: _asBool(j['has_more']),
+        total: _asInt(j['total']),
+      );
+
+  /// 编码成与 Go SDK 相同的 JSON。
+  Map<String, dynamic> toJson() => {
+        'items': items.map((e) => e.toJson()).toList(),
+        'cursor': cursor,
+        'has_more': hasMore,
+        'total': total,
+      };
+}
+
 /// ContentKey 是受保护播放模型的 CENC（cenc-aes-ctr）内容密钥，
 /// 由 sdk.ContentKey 还原。
 class ContentKey {
@@ -2012,27 +2098,99 @@ class Suggestion {
       };
 }
 
+/// ToneEntry 是音色表里的一条可选音色。
+class ToneEntry {
+  /// ID 是 TTS 音色 id（>0）；真人主播条目为 0。
+  final int id;
+  /// Title 是展示名：TTS 如「成熟大叔音升级版」，真人如「主播：海风飨风林」。
+  final String title;
+  /// Description 是 TTS 音色的风格短描述（如「超自然」），真人条目为空。
+  final String description;
+  /// Badge 是 TTS 音色的角标（如「多角色」），无角标时为空。
+  final String badge;
+  /// Human 表示真人主播条目：收听它要切到 ABookID 那本有声书以
+  /// tone_id=0 播放（章节按序号与小说对齐）。TTS 条目为 false，
+  /// 直接在小说 id 上以 tone_id=ID 播放。
+  final bool human;
+  /// ABookID 是真人主播的有声书 id；TTS 条目为空。
+  final String abookId;
+
+  const ToneEntry({
+    this.id = 0,
+    this.title = '',
+    this.description = '',
+    this.badge = '',
+    this.human = false,
+    this.abookId = '',
+  });
+
+  /// 从 Go SDK 输出的 JSON 解码；缺省的字段取零值。
+  factory ToneEntry.fromJson(Map<String, dynamic> j) => ToneEntry(
+        id: _asInt(j['id']),
+        title: _asString(j['title']),
+        description: _asString(j['description']),
+        badge: _asString(j['badge']),
+        human: _asBool(j['human']),
+        abookId: _asString(j['abook_id']),
+      );
+
+  /// 编码成与 Go SDK 相同的 JSON。
+  Map<String, dynamic> toJson() => {
+        'id': id,
+        'title': title,
+        'description': description,
+        'badge': badge,
+        'human': human,
+        'abook_id': abookId,
+      };
+}
+
 /// ToneInfo 是有声书的音色信息：这本书是否有可播的音色，
 /// 以及（当本书本身是有声书时）它对应的小说 book_id。
 class ToneInfo {
   final String relateNovelId;
   final bool hasTones;
+  /// HasAudioTones 表示本书有真人主播录制音色（audio_tones 非空）：
+  /// 这类书 playinfo 用 tone_id=0 即主播原声。
+  final bool hasAudioTones;
+  /// RecommendTone 是服务端推荐的 TTS 音色 id（recommend_tone）；
+  /// 纯 TTS 书没有 0 号音色，playinfo 必须传真实音色 id。
+  final int recommendTone;
+  /// TTSToneIDs 是本书可用的 TTS 音色 id 列表（tts_tones）。
+  final List<int> ttsToneIds;
+  /// Tones 是完整的音色表（真人主播在前、TTS 在后），带名称，供
+  /// 调用方做音色选择。注意音色表要查「小说 id」的那份：小说的真人
+  /// 主播是独立的有声书（ABookID），TTS 音色挂在小说 id 下；有声书
+  /// 自身的音色表里 audio_tones 只含它自己。
+  final List<ToneEntry> tones;
 
   const ToneInfo({
     this.relateNovelId = '',
     this.hasTones = false,
+    this.hasAudioTones = false,
+    this.recommendTone = 0,
+    this.ttsToneIds = const [],
+    this.tones = const [],
   });
 
   /// 从 Go SDK 输出的 JSON 解码；缺省的字段取零值。
   factory ToneInfo.fromJson(Map<String, dynamic> j) => ToneInfo(
         relateNovelId: _asString(j['relate_novel_id']),
         hasTones: _asBool(j['has_tones']),
+        hasAudioTones: _asBool(j['has_audio_tones']),
+        recommendTone: _asInt(j['recommend_tone']),
+        ttsToneIds: _asList(j['tts_tone_ids'], (e) => _asInt(e)),
+        tones: _asList(j['tones'], (e) => ToneEntry.fromJson(_asMap(e))),
       );
 
   /// 编码成与 Go SDK 相同的 JSON。
   Map<String, dynamic> toJson() => {
         'relate_novel_id': relateNovelId,
         'has_tones': hasTones,
+        'has_audio_tones': hasAudioTones,
+        'recommend_tone': recommendTone,
+        'tts_tone_ids': ttsToneIds,
+        'tones': tones.map((e) => e.toJson()).toList(),
       };
 }
 
@@ -2295,5 +2453,22 @@ class CommentOptions {
         if (startOffsetMs != null) 'startOffsetMs': startOffsetMs!,
         if (cursor != null) 'cursor': cursor!,
         if (durationMs != null) 'durationMs': durationMs!,
+      };
+}
+
+/// PanelCommentOptions 是评论面板流的一页请求。Cursor 是上一页给出的
+/// 游标（首页为空）；Count 是每页条数（<=0 时用官方默认 10）。
+class PanelCommentOptions {
+  final String? cursor;
+  final int? count;
+
+  const PanelCommentOptions({this.cursor, this.count});
+
+  PanelCommentOptions copyWith({String? cursor, int? count}) =>
+      PanelCommentOptions(cursor: cursor ?? this.cursor, count: count ?? this.count);
+
+  Map<String, dynamic> toJson() => {
+        if (cursor != null) 'cursor': cursor!,
+        if (count != null) 'count': count!,
       };
 }

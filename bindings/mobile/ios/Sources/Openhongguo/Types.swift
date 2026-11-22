@@ -196,6 +196,90 @@ public struct CommentPage: Codable, Hashable, Sendable {
     }
 }
 
+/// CommentPanelItem 是官方评论面板流里的一条评论：带评论 id、作者昵称与
+/// 头像、点赞数、回复数与发布时间（Unix 秒）。与 CommentItem（弹幕流派生，
+/// 无昵称/头像、服务端采样）是两条不同的流，见 Client.CommentPanelList。
+public struct CommentPanelItem: Codable, Hashable, Sendable {
+    public var id: String
+    public var text: String
+    public var userId: String
+    public var nickname: String
+    public var avatar: String
+    public var diggCount: Int
+    public var replyCount: Int
+    public var createTimestamp: Int
+    public var offsetMs: Int
+
+    public init(id: String = "", text: String = "", userId: String = "", nickname: String = "", avatar: String = "", diggCount: Int = 0, replyCount: Int = 0, createTimestamp: Int = 0, offsetMs: Int = 0) {
+        self.id = id
+        self.text = text
+        self.userId = userId
+        self.nickname = nickname
+        self.avatar = avatar
+        self.diggCount = diggCount
+        self.replyCount = replyCount
+        self.createTimestamp = createTimestamp
+        self.offsetMs = offsetMs
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case id
+        case text
+        case userId = "user_id"
+        case nickname
+        case avatar
+        case diggCount = "digg_count"
+        case replyCount = "reply_count"
+        case createTimestamp = "create_timestamp"
+        case offsetMs = "offset_ms"
+    }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        self.id = try c.decodeIfPresent(String.self, forKey: .id) ?? ""
+        self.text = try c.decodeIfPresent(String.self, forKey: .text) ?? ""
+        self.userId = try c.decodeIfPresent(String.self, forKey: .userId) ?? ""
+        self.nickname = try c.decodeIfPresent(String.self, forKey: .nickname) ?? ""
+        self.avatar = try c.decodeIfPresent(String.self, forKey: .avatar) ?? ""
+        self.diggCount = try c.decodeIfPresent(Int.self, forKey: .diggCount) ?? 0
+        self.replyCount = try c.decodeIfPresent(Int.self, forKey: .replyCount) ?? 0
+        self.createTimestamp = try c.decodeIfPresent(Int.self, forKey: .createTimestamp) ?? 0
+        self.offsetMs = try c.decodeIfPresent(Int.self, forKey: .offsetMs) ?? 0
+    }
+}
+
+/// CommentPanelPage 是评论面板流的一页。Cursor 传回
+/// PanelCommentOptions 继续翻页，HasMore 为假即到底。Total 是
+/// need_count 请求回的评论总数，服务端未给时为 0。
+public struct CommentPanelPage: Codable, Hashable, Sendable {
+    public var items: [CommentPanelItem]
+    public var cursor: String
+    public var hasMore: Bool
+    public var total: Int
+
+    public init(items: [CommentPanelItem] = [], cursor: String = "", hasMore: Bool = false, total: Int = 0) {
+        self.items = items
+        self.cursor = cursor
+        self.hasMore = hasMore
+        self.total = total
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case items
+        case cursor
+        case hasMore = "has_more"
+        case total
+    }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        self.items = try c.decodeIfPresent([CommentPanelItem].self, forKey: .items) ?? []
+        self.cursor = try c.decodeIfPresent(String.self, forKey: .cursor) ?? ""
+        self.hasMore = try c.decodeIfPresent(Bool.self, forKey: .hasMore) ?? false
+        self.total = try c.decodeIfPresent(Int.self, forKey: .total) ?? 0
+    }
+}
+
 /// ContentKey 是受保护播放模型的 CENC（cenc-aes-ctr）内容密钥，
 /// 由 sdk.ContentKey 还原。
 public struct ContentKey: Codable, Hashable, Sendable {
@@ -1925,26 +2009,97 @@ public struct Suggestion: Codable, Hashable, Sendable {
     }
 }
 
+/// ToneEntry 是音色表里的一条可选音色。
+public struct ToneEntry: Codable, Hashable, Sendable {
+    /// ID 是 TTS 音色 id（>0）；真人主播条目为 0。
+    public var id: Int
+    /// Title 是展示名：TTS 如「成熟大叔音升级版」，真人如「主播：海风飨风林」。
+    public var title: String
+    /// Description 是 TTS 音色的风格短描述（如「超自然」），真人条目为空。
+    public var description: String
+    /// Badge 是 TTS 音色的角标（如「多角色」），无角标时为空。
+    public var badge: String
+    /// Human 表示真人主播条目：收听它要切到 ABookID 那本有声书以
+    /// tone_id=0 播放（章节按序号与小说对齐）。TTS 条目为 false，
+    /// 直接在小说 id 上以 tone_id=ID 播放。
+    public var human: Bool
+    /// ABookID 是真人主播的有声书 id；TTS 条目为空。
+    public var abookId: String
+
+    public init(id: Int = 0, title: String = "", description: String = "", badge: String = "", human: Bool = false, abookId: String = "") {
+        self.id = id
+        self.title = title
+        self.description = description
+        self.badge = badge
+        self.human = human
+        self.abookId = abookId
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case id
+        case title
+        case description
+        case badge
+        case human
+        case abookId = "abook_id"
+    }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        self.id = try c.decodeIfPresent(Int.self, forKey: .id) ?? 0
+        self.title = try c.decodeIfPresent(String.self, forKey: .title) ?? ""
+        self.description = try c.decodeIfPresent(String.self, forKey: .description) ?? ""
+        self.badge = try c.decodeIfPresent(String.self, forKey: .badge) ?? ""
+        self.human = try c.decodeIfPresent(Bool.self, forKey: .human) ?? false
+        self.abookId = try c.decodeIfPresent(String.self, forKey: .abookId) ?? ""
+    }
+}
+
 /// ToneInfo 是有声书的音色信息：这本书是否有可播的音色，
 /// 以及（当本书本身是有声书时）它对应的小说 book_id。
 public struct ToneInfo: Codable, Hashable, Sendable {
     public var relateNovelId: String
     public var hasTones: Bool
+    /// HasAudioTones 表示本书有真人主播录制音色（audio_tones 非空）：
+    /// 这类书 playinfo 用 tone_id=0 即主播原声。
+    public var hasAudioTones: Bool
+    /// RecommendTone 是服务端推荐的 TTS 音色 id（recommend_tone）；
+    /// 纯 TTS 书没有 0 号音色，playinfo 必须传真实音色 id。
+    public var recommendTone: Int
+    /// TTSToneIDs 是本书可用的 TTS 音色 id 列表（tts_tones）。
+    public var ttsToneIds: [Int]
+    /// Tones 是完整的音色表（真人主播在前、TTS 在后），带名称，供
+    /// 调用方做音色选择。注意音色表要查「小说 id」的那份：小说的真人
+    /// 主播是独立的有声书（ABookID），TTS 音色挂在小说 id 下；有声书
+    /// 自身的音色表里 audio_tones 只含它自己。
+    public var tones: [ToneEntry]
 
-    public init(relateNovelId: String = "", hasTones: Bool = false) {
+    public init(relateNovelId: String = "", hasTones: Bool = false, hasAudioTones: Bool = false, recommendTone: Int = 0, ttsToneIds: [Int] = [], tones: [ToneEntry] = []) {
         self.relateNovelId = relateNovelId
         self.hasTones = hasTones
+        self.hasAudioTones = hasAudioTones
+        self.recommendTone = recommendTone
+        self.ttsToneIds = ttsToneIds
+        self.tones = tones
     }
 
     enum CodingKeys: String, CodingKey {
         case relateNovelId = "relate_novel_id"
         case hasTones = "has_tones"
+        case hasAudioTones = "has_audio_tones"
+        case recommendTone = "recommend_tone"
+        case ttsToneIds = "tts_tone_ids"
+        case tones
     }
 
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         self.relateNovelId = try c.decodeIfPresent(String.self, forKey: .relateNovelId) ?? ""
         self.hasTones = try c.decodeIfPresent(Bool.self, forKey: .hasTones) ?? false
+        self.hasAudioTones = try c.decodeIfPresent(Bool.self, forKey: .hasAudioTones) ?? false
+        self.recommendTone = try c.decodeIfPresent(Int.self, forKey: .recommendTone) ?? 0
+        self.ttsToneIds = try c.decodeIfPresent([Int].self, forKey: .ttsToneIds) ?? []
+        self.tones = try c.decodeIfPresent([ToneEntry].self, forKey: .tones) ?? []
     }
 }
 
@@ -2160,5 +2315,17 @@ public struct CommentOptions: Encodable, Hashable, Sendable {
         self.startOffsetMs = startOffsetMs
         self.cursor = cursor
         self.durationMs = durationMs
+    }
+}
+
+/// PanelCommentOptions 是评论面板流的一页请求。Cursor 是上一页给出的
+/// 游标（首页为空）；Count 是每页条数（<=0 时用官方默认 10）。
+public struct PanelCommentOptions: Encodable, Hashable, Sendable {
+    public var cursor: String?
+    public var count: Int?
+
+    public init(cursor: String? = nil, count: Int? = nil) {
+        self.cursor = cursor
+        self.count = count
     }
 }

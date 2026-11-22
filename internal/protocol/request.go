@@ -620,6 +620,46 @@ func CommentListBody(episodeID, seriesID string, startOffsetMs, durationMs int64
 	})
 }
 
+// PanelCommentListBody is the comment/list body the official app's video
+// comment panel sends (decompiled from the official 7.4.5.16 APK 2026-11-22:
+// presenter builds BizGetCommentListRequest with source NovelItemComment=4,
+// channel NovelItemList=18, group_type SeriesVideo=30, comment_type
+// NewItem=4, sort SmartHot=1, count=10, business_param need_count=true,
+// book_id=series_id, req_type=0 (int: the presenter's isPreload flag),
+// client_ab_params="video_innerflow"). This is a DIFFERENT stream
+// from the danmaku body above (source 601 / channel 1000 / type 20): the
+// danmaku stream is server-side sampled and its items carry an empty
+// user base_info, while the panel stream is the full comment list with
+// nickname/avatar/create_time. Enum values read from the dex <clinit> of
+// com.dragon.read.rpc.kmp.community.model.* in classes9.dex.
+func PanelCommentListBody(episodeID, seriesID string, cursor string, count int) ([]byte, error) {
+	aid, err := strconv.Atoi(AID)
+	if err != nil {
+		return nil, err
+	}
+	if count <= 0 {
+		count = 10
+	}
+	return jsonMarshal(map[string]any{
+		"comment_source": 4,
+		"server_channel": 18,
+		"group_id":       episodeID,
+		"group_type":     30,
+		"comment_type":   4,
+		"sort":           1,
+		"business_param": map[string]any{
+			"book_id":          seriesID,
+			"need_count":       true,
+			"req_type":         0,
+			"client_ab_params": "video_innerflow",
+		},
+		"count":             count,
+		"cursor":            cursor,
+		"aid":               aid,
+		"compliance_status": 0,
+	})
+}
+
 // SignedCategoryPairs is the ordered category-page query.
 func SignedCategoryPairs(id SearchIdentity, categoryID string, offset, count int) [][2]string {
 	return append(DeviceQueryPairs(id),

@@ -2254,6 +2254,170 @@ func ParseCommentList(raw []byte, startOffsetMs int64) (*CommentListResult, erro
 	return out, nil
 }
 
+// PanelCommentListResult is one page of the official comment panel stream
+// (see PanelCommentListBody). Unlike the danmaku stream its items carry the
+// full user base_info (nickname/avatar), comment_id, create_timestamp and
+// reply_count.
+type PanelCommentListResult struct {
+	Items   []model.CommentPanelItem
+	Cursor  string
+	HasMore bool
+	Total   int
+}
+
+// ParsePanelCommentList parses one page of the panel comment stream.
+func ParsePanelCommentList(raw []byte) (*PanelCommentListResult, error) {
+	var env struct {
+		Code flexString `json:"code"`
+		Data struct {
+			List []struct {
+				Comment struct {
+					ID     flexString `json:"comment_id"`
+					Common struct {
+						CreateTimestamp flexInt64 `json:"create_timestamp"`
+						Content         struct {
+							Text string `json:"text"`
+						} `json:"content"`
+						UserInfo struct {
+							UserID   flexString      `json:"user_id"`
+							BaseInfo json.RawMessage `json:"base_info"`
+						} `json:"user_info"`
+					} `json:"common"`
+					Expand struct {
+						OffsetTime flexInt64 `json:"offset_time"`
+					} `json:"expand"`
+					Stat struct {
+						DiggCount  flexInt64 `json:"digg_count"`
+						ReplyCount flexInt64 `json:"reply_count"`
+					} `json:"stat"`
+				} `json:"comment"`
+			} `json:"data_list"`
+			Info  json.RawMessage `json:"common_list_info"`
+			Extra json.RawMessage `json:"extra"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(raw, &env); err != nil {
+		return nil, err
+	}
+	if env.Code.String() != "" && env.Code.String() != "0" {
+		return nil, fmt.Errorf("panel comment list code %s", env.Code.String())
+	}
+	out := &PanelCommentListResult{Items: []model.CommentPanelItem{}}
+	var info struct {
+		Cursor  string `json:"cursor"`
+		HasMore bool   `json:"has_more"`
+	}
+	if len(env.Data.Info) > 0 {
+		_ = json.Unmarshal(env.Data.Info, &info)
+	}
+	out.Cursor = info.Cursor
+	out.HasMore = info.HasMore
+	out.Total = panelCommentTotal(env.Data.Info, env.Data.Extra, info.Cursor)
+	for _, row := range env.Data.List {
+		c := row.Comment
+		if c.Common.Content.Text == "" {
+			continue
+		}
+		nick, avatar := panelBaseInfo(c.Common.UserInfo.BaseInfo)
+		out.Items = append(out.Items, model.CommentPanelItem{
+			ID:              c.ID.String(),
+			Text:            c.Common.Content.Text,
+			UserID:          c.Common.UserInfo.UserID.String(),
+			Nickname:        nick,
+			Avatar:          avatar,
+			DiggCount:       int64(c.Stat.DiggCount),
+			ReplyCount:      int64(c.Stat.ReplyCount),
+			CreateTimestamp: int64(c.Common.CreateTimestamp),
+			OffsetMs:        int64(c.Expand.OffsetTime),
+		})
+	}
+	return out, nil
+}
+
+// panelBaseInfo extracts nickname and avatar URL from a comment item's
+// user_info.base_info object. The danmaku stream ships this object empty;
+// the panel stream populates it. Avatar may be a plain URL string or an
+// image object with url_list/uri.
+func panelBaseInfo(raw json.RawMessage) (string, string) {
+	if len(raw) == 0 {
+		return "", ""
+	}
+	var m map[string]any
+	if err := json.Unmarshal(raw, &m); err != nil {
+		return "", ""
+	}
+	str := func(keys ...string) string {
+		for _, k := range keys {
+			if s, ok := m[k].(string); ok && s != "" {
+				return s
+			}
+		}
+		return ""
+	}
+	nick := str("user_name", "nickname", "nick_name", "name")
+	avatar := str("user_avatar", "expand_user_avatar", "avatar_url", "avatar_thumb_url", "avatar_medium_url")
+	if avatar == "" {
+		for _, k := range []string{"avatar", "avatar_thumb", "avatar_medium", "avatar_large"} {
+			switch v := m[k].(type) {
+			case string:
+				if v != "" {
+					avatar = v
+				}
+			case map[string]any:
+				if list, ok := v["url_list"].([]any); ok && len(list) > 0 {
+					if s, ok := list[0].(string); ok {
+						avatar = s
+					}
+				}
+				if avatar == "" {
+					if s, ok := v["uri"].(string); ok {
+						avatar = s
+					}
+				}
+			}
+			if avatar != "" {
+				break
+			}
+		}
+	}
+	return nick, avatar
+}
+
+// panelCommentTotal finds the panel's total comment count (requested with
+// need_count=true): a numeric total/comment_count in common_list_info or
+// extra, or embedded in the cursor JSON.
+func panelCommentTotal(info, extra json.RawMessage, cursor string) int {
+	for _, rawMsg := range []json.RawMessage{info, extra} {
+		if len(rawMsg) == 0 {
+			continue
+		}
+		var v any
+		if err := json.Unmarshal(rawMsg, &v); err != nil {
+			continue
+		}
+		for _, key := range []string{"comment_count", "total_count", "total"} {
+			if n, ok := findCount(v, key); ok {
+				return n
+			}
+		}
+	}
+	for _, s := range []string{cursor, decodeBase64Loose(cursor)} {
+		if s == "" {
+			continue
+		}
+		var v any
+		if err := json.Unmarshal([]byte(s), &v); err != nil {
+			continue
+		}
+		for _, key := range []string{"comment_count", "total_count"} {
+			if n, ok := findCount(v, key); ok {
+				return n
+			}
+		}
+	}
+	return 0
+}
+
 // danmakuCount reads the service-reported danmaku_count carried inside the
 // comment/list cursor. The cursor is an opaque string; observed values are
 // JSON (possibly base64-wrapped). It returns 0 when the count is absent.
@@ -2814,14 +2978,42 @@ func ParseToneInfo(raw []byte) (*model.ToneInfo, error) {
 		return len(t) > 2 && string(t) != "null" && string(t) != "[]"
 	}
 	var ttsIDs []int
+	var entries []model.ToneEntry
+	if has(env.Data.AudioTones) {
+		var tones []struct {
+			ABookID flexString `json:"abook_id"`
+			Title   string     `json:"title"`
+		}
+		if err := json.Unmarshal(env.Data.AudioTones, &tones); err == nil {
+			for _, t := range tones {
+				if t.ABookID.String() == "" {
+					continue
+				}
+				entries = append(entries, model.ToneEntry{
+					Title:   t.Title,
+					Human:   true,
+					ABookID: t.ABookID.String(),
+				})
+			}
+		}
+	}
 	if has(env.Data.TTSTones) {
 		var tones []struct {
-			ID int `json:"id"`
+			ID          int    `json:"id"`
+			Title       string `json:"title"`
+			Description string `json:"description"`
+			Badge       string `json:"badge"`
 		}
 		if err := json.Unmarshal(env.Data.TTSTones, &tones); err == nil {
 			for _, t := range tones {
 				if t.ID > 0 {
 					ttsIDs = append(ttsIDs, t.ID)
+					entries = append(entries, model.ToneEntry{
+						ID:          t.ID,
+						Title:       t.Title,
+						Description: t.Description,
+						Badge:       t.Badge,
+					})
 				}
 			}
 		}
@@ -2832,6 +3024,7 @@ func ParseToneInfo(raw []byte) (*model.ToneInfo, error) {
 		HasAudioTones: has(env.Data.AudioTones),
 		RecommendTone: env.Data.RecommendTone,
 		TTSToneIDs:    ttsIDs,
+		Tones:         entries,
 	}, nil
 }
 

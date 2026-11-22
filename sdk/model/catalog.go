@@ -534,6 +534,31 @@ type CommentPage struct {
 	ReportedCount int           `json:"reported_count,omitempty"`
 }
 
+// CommentPanelItem 是官方评论面板流里的一条评论：带评论 id、作者昵称与
+// 头像、点赞数、回复数与发布时间（Unix 秒）。与 CommentItem（弹幕流派生，
+// 无昵称/头像、服务端采样）是两条不同的流，见 Client.CommentPanelList。
+type CommentPanelItem struct {
+	ID              string `json:"id"`
+	Text            string `json:"text"`
+	UserID          string `json:"user_id,omitempty"`
+	Nickname        string `json:"nickname,omitempty"`
+	Avatar          string `json:"avatar,omitempty"`
+	DiggCount       int64  `json:"digg_count,omitempty"`
+	ReplyCount      int64  `json:"reply_count,omitempty"`
+	CreateTimestamp int64  `json:"create_timestamp,omitempty"`
+	OffsetMs        int64  `json:"offset_ms,omitempty"`
+}
+
+// CommentPanelPage 是评论面板流的一页。Cursor 传回
+// PanelCommentOptions 继续翻页，HasMore 为假即到底。Total 是
+// need_count 请求回的评论总数，服务端未给时为 0。
+type CommentPanelPage struct {
+	Items   []CommentPanelItem `json:"items"`
+	Cursor  string             `json:"cursor,omitempty"`
+	HasMore bool               `json:"has_more"`
+	Total   int                `json:"total,omitempty"`
+}
+
 // DanmakuPage 是一集弹幕的一页：服务端按播放时间划出的一段（2026-11-11
 // 实测为 30 秒）。
 type DanmakuPage struct {
