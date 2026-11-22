@@ -104,43 +104,104 @@ func (c *Client) resolvePlaybackChain(ctx context.Context, episodeID string, mod
 				remoteErr = err
 			}
 		}
-		if pb, err := c.playbackIdentity(ctx); err == nil {
-			if playback, err := c.resolvePlaybackViaMobileV5(ctx, pb, episodeID); playback != nil {
-				return playback, err
-			}
-			// 2026-11-20 实测：平台逐通道开关播放发放——v5 全天空返的
-			// 时段里 tab 多集仍在发放（满院亲戚/少夫人3/冒名入仕等均经
-			// 此通道拿到 5 档模型）。故 tab 多集紧随 v5，不再排在已退役
-			// 的 player/multi 之后白等。
-			if playback, err := c.resolvePlaybackViaTabMulti(ctx, pb, episodeID); playback != nil {
-				return playback, err
+		// 本轮计划按通道健康定（见 channel_health.go）：首选通道在它
+		// 所在的结构段内置前，down 中的通道跳过其常规位置；全部通道
+		// 都 down 时不跳过、按经典顺序整链重探。计划是链首快照，本轮
+		// 内新记的健康变化不截断本轮结构（新鲜身份重试要完整走完）。
+		plan := c.channels.plan(c.clock())
+		// 2026-11-20 实测：平台逐通道开关播放发放——v5 全天空返的
+		// 时段里 tab 多集仍在发放（满院亲戚/少夫人3/冒名入仕等均经
+		// 此通道拿到 5 档模型）。故 tab 多集紧随 v5，不再排在已退役
+		// 的 player/multi 之后白等。
+		head := []identityChannel{
+			{channelV5, c.resolvePlaybackViaMobileV5},
+			{channelTabMulti, c.resolvePlaybackViaTabMulti},
+		}
+		if plan.preferred == channelTabMulti {
+			head[0], head[1] = head[1], head[0]
+		}
+		if plan.attempt(channelV5) || plan.attempt(channelTabMulti) {
+			if pb, err := c.playbackIdentity(ctx); err == nil {
+				for _, ch := range head {
+					if playback, err := c.tryPlaybackChannel(ctx, plan, ch.name, func() (*model.Playback, error) {
+						return ch.fn(ctx, pb, episodeID)
+					}); playback != nil {
+						return playback, err
+					}
+				}
 			}
 		}
-		if playback, err := c.resolvePlaybackViaPlayer(ctx, episodeID); playback != nil {
+		if playback, err := c.tryPlaybackChannel(ctx, plan, channelPlayer, func() (*model.Playback, error) {
+			return c.resolvePlaybackViaPlayer(ctx, episodeID)
+		}); playback != nil {
 			return playback, err
 		}
 		if pb, err := c.playbackIdentity(ctx); err == nil {
-			if playback, err := c.resolvePlaybackViaMultiPlayerV2(ctx, pb, episodeID); playback != nil {
-				return playback, err
+			multi := []identityChannel{
+				{channelMultiV2, c.resolvePlaybackViaMultiPlayerV2},
+				{channelMulti, c.resolvePlaybackViaMultiPlayer},
 			}
-			if playback, err := c.resolvePlaybackViaMultiPlayer(ctx, pb, episodeID); playback != nil {
-				return playback, err
+			if plan.preferred == channelMulti {
+				multi[0], multi[1] = multi[1], multi[0]
 			}
+			for _, ch := range multi {
+				if playback, err := c.tryPlaybackChannel(ctx, plan, ch.name, func() (*model.Playback, error) {
+					return ch.fn(ctx, pb, episodeID)
+				}); playback != nil {
+					return playback, err
+				}
+			}
+			// multi 通道全空（或被健康计划跳过）后照旧丢弃播放身份、
+			// 换新鲜身份重试一次 tab 多集：播放身份可能是一次性的，
+			// 且 tab 多集的 down 标记可能记在旧身份头上——这次重试不
+			// 受健康计划跳过，结果照常记账。
 			c.dropPlaybackIdentityIf(pb)
 			if pb2, err := c.playbackIdentity(ctx); err == nil {
-				if playback, err := c.resolvePlaybackViaTabMulti(ctx, pb2, episodeID); playback != nil {
+				if playback, err := c.attemptPlaybackChannel(ctx, channelTabMulti, func() (*model.Playback, error) {
+					return c.resolvePlaybackViaTabMulti(ctx, pb2, episodeID)
+				}); playback != nil {
 					return playback, err
 				}
 			}
 		}
-		if playback, err := c.resolvePlaybackViaTab(ctx, episodeID); playback != nil {
+		if playback, err := c.tryPlaybackChannel(ctx, plan, channelTab, func() (*model.Playback, error) {
+			return c.resolvePlaybackViaTab(ctx, episodeID)
+		}); playback != nil {
 			return playback, err
 		}
 		if remoteErr != nil {
 			return nil, remoteErr
 		}
-		return c.resolvePlaybackViaPlayer(ctx, episodeID)
+		// 收尾的 player 尝试不受健康计划跳过：它的错误是整条链的
+		// 错误来源（如 ErrAnonymousLimited 驱动换设备重试），跳过
+		// 会让链以 (nil, nil) 收场。
+		return c.attemptPlaybackChannel(ctx, channelPlayer, func() (*model.Playback, error) {
+			return c.resolvePlaybackViaPlayer(ctx, episodeID)
+		})
 	})
+}
+
+// identityChannel 是走播放身份的一条取址通道：健康记账用的通道名与
+// 通道实现。
+type identityChannel struct {
+	name string
+	fn   func(context.Context, *DeviceProfile, string) (*model.Playback, error)
+}
+
+// attemptPlaybackChannel 执行一次通道尝试并把结果记进通道健康跟踪。
+func (c *Client) attemptPlaybackChannel(ctx context.Context, name string, attempt func() (*model.Playback, error)) (*model.Playback, error) {
+	playback, err := attempt()
+	c.noteChannelOutcome(ctx, name, playback, err)
+	return playback, err
+}
+
+// tryPlaybackChannel 是 attemptPlaybackChannel 的健康计划版：通道在
+// 本轮计划里被跳过时不发请求、直接落空继续（返回 nil, nil）。
+func (c *Client) tryPlaybackChannel(ctx context.Context, plan chainPlan, name string, attempt func() (*model.Playback, error)) (*model.Playback, error) {
+	if !plan.attempt(name) {
+		return nil, nil
+	}
+	return c.attemptPlaybackChannel(ctx, name, attempt)
 }
 
 // mobileV5UA is the User-Agent the v5 playback request carries: the

@@ -2,6 +2,7 @@ package sdk
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 
@@ -16,8 +17,11 @@ const batchV5ChunkSize = 20
 
 // ResolvePlaybackBatch 批量解析多集的播放模型。优先走移动端 v5 通道
 // 一次请求多集（同一播放身份复用，不逐集注册）；批量响应未覆盖的集
-// 回退到单集 ResolvePlayback 的完整通道链。返回值是成功解析的播放
-// 模型与逐集错误：整体失败时，请求过的每一集都会出现在 errs 里。
+// 回退到单集 ResolvePlayback 的完整通道链。批量通道的健康独立记账
+// （channel_health.go 的 v5batch）：一次空发放（空响应或零模型）后
+// 45 秒内整块跳过批量 POST、直接走单集链，不再逐块白试死通道。
+// 返回值是成功解析的播放模型与逐集错误：整体失败时，请求过的每一
+// 集都会出现在 errs 里。
 func (c *Client) ResolvePlaybackBatch(ctx context.Context, ids []string) (map[string]*model.Playback, map[string]error) {
 	playbacks := make(map[string]*model.Playback)
 	errs := make(map[string]error)
@@ -57,15 +61,37 @@ func (c *Client) ResolvePlaybackBatch(ctx context.Context, ids []string) (map[st
 		}
 		chunk := uniq[start:end]
 		var missing []string
-		if idErr != nil {
+		switch {
+		case idErr != nil:
 			missing = chunk
-		} else if raw, err := c.resolveBatchV5Raw(ctx, p, chunk); err != nil {
+		case c.channels.isDown(channelV5Batch, c.clock()):
+			// 批量通道已知不发放：不再白付一次死 POST，整块直接走
+			// 单集链（链本身按健康计划首选活通道）。
 			missing = chunk
-		} else {
-			var got map[string]*model.Playback
-			got, missing = parseBatchV5Playback(raw, chunk)
-			for id, pb := range got {
-				playbacks[id] = pb
+		default:
+			raw, err := c.resolveBatchV5Raw(ctx, p, chunk)
+			switch {
+			case err != nil:
+				// 200 空响应体在 doRaw 里映射为 ErrAnonymousLimited：
+				// 这就是批量通道的空发放，记 down；其余错误（传输、
+				// 上下文等）不归咎于通道，只回退本块。
+				if errors.Is(err, ErrAnonymousLimited) {
+					c.channels.recordEmpty(channelV5Batch, c.clock())
+				}
+				missing = chunk
+			default:
+				var got map[string]*model.Playback
+				got, missing = parseBatchV5Playback(raw, chunk)
+				if len(got) == 0 {
+					// 响应回来了却一集模型都没有：批量通道空发放，
+					// 记 down，后续块与后续调用不再白试。
+					c.channels.recordEmpty(channelV5Batch, c.clock())
+				} else {
+					c.channels.recordSuccess(channelV5Batch, c.clock())
+				}
+				for id, pb := range got {
+					playbacks[id] = pb
+				}
 			}
 		}
 		for _, id := range missing {

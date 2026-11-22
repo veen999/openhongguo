@@ -74,6 +74,10 @@ type Client struct {
 	fridaAt      time.Time
 	// durations 记住各集的时长，供 ListDanmaku 使用。
 	durations durationCache
+	// channels 是本地取址通道的健康跟踪（见 channel_health.go）：
+	// 平台逐通道开关发放，取址链按它跳过已知不发放的通道、优先用
+	// 最近成功的通道，不再每次从链首白试死通道。
+	channels channelHealth
 }
 
 // NewClient 根据 opts 创建客户端。Transport 和 ProfileStore 必填；
