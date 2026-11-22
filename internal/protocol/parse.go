@@ -2799,6 +2799,8 @@ func ParseToneInfo(raw []byte) (*model.ToneInfo, error) {
 			RelateNovelID flexString      `json:"relate_novel_bookid"`
 			Tones         json.RawMessage `json:"tones"`
 			TTSTones      json.RawMessage `json:"tts_tones"`
+			AudioTones    json.RawMessage `json:"audio_tones"`
+			RecommendTone int             `json:"recommend_tone"`
 		} `json:"data"`
 	}
 	if err := json.Unmarshal(raw, &env); err != nil {
@@ -2811,9 +2813,25 @@ func ParseToneInfo(raw []byte) (*model.ToneInfo, error) {
 		t := bytes.TrimSpace(r)
 		return len(t) > 2 && string(t) != "null" && string(t) != "[]"
 	}
+	var ttsIDs []int
+	if has(env.Data.TTSTones) {
+		var tones []struct {
+			ID int `json:"id"`
+		}
+		if err := json.Unmarshal(env.Data.TTSTones, &tones); err == nil {
+			for _, t := range tones {
+				if t.ID > 0 {
+					ttsIDs = append(ttsIDs, t.ID)
+				}
+			}
+		}
+	}
 	return &model.ToneInfo{
 		RelateNovelID: env.Data.RelateNovelID.String(),
 		HasTones:      has(env.Data.Tones) || has(env.Data.TTSTones),
+		HasAudioTones: has(env.Data.AudioTones),
+		RecommendTone: env.Data.RecommendTone,
+		TTSToneIDs:    ttsIDs,
 	}, nil
 }
 

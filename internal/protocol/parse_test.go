@@ -1052,3 +1052,19 @@ func TestSuggestPairsNameThePrefixQ(t *testing.T) {
 		t.Fatalf("suggest pairs = %v", got)
 	}
 }
+
+func TestParseToneInfoReadsTones(t *testing.T) {
+	got, err := ParseToneInfo(fixture(t, "toneinfo-response.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.RelateNovelID != "1234567890123456789" || !got.HasTones {
+		t.Fatalf("tone info = %+v", got)
+	}
+	if got.HasAudioTones {
+		t.Fatalf("audio tones should be empty: %+v", got)
+	}
+	if got.RecommendTone != 80 || len(got.TTSToneIDs) != 3 || got.TTSToneIDs[0] != 80 {
+		t.Fatalf("tts tones = %+v", got)
+	}
+}

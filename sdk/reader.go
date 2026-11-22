@@ -31,6 +31,13 @@ func (c *Client) AudioPlayback(ctx context.Context, bookID, itemID string, toneI
 		if err != nil {
 			return nil, err
 		}
+		if toneID == 0 {
+			// 0 不是平台的「默认音色」：真人主播书用 0 取主播原声，但纯
+			// TTS 书没有 0 号音色，playinfo 会以 101019 NO_THIS_TONE 拒绝
+			// （2026-11-22 实测：一本 TTS 小说 tone 0 被拒、改用推荐音色
+			// 即成功）。调用方未指定音色时，先按本书的音色表定默认音色。
+			toneID = c.defaultAudioTone(ctx, p, bookID)
+		}
 		ticket := c.clock().UnixMilli()
 		rawQuery, headers := sign.SignGET(protocol.SignedAudioPlayInfoPairs(c.identity(p), bookID, itemID, toneID), ticket, p.DeviceID, protocol.VersionName, nil)
 		raw, _, err := c.doRaw(ctx, "GET", c.apiOrigin+protocol.PathAudioPlayInfo+"?"+rawQuery, anonymousHeaders(c, p, ticket, headers), nil)
@@ -62,14 +69,55 @@ func (c *Client) ToneInfo(ctx context.Context, bookID string) (*model.ToneInfo, 
 		if err != nil {
 			return nil, err
 		}
-		ticket := c.clock().UnixMilli()
-		rawQuery, headers := sign.SignGET(protocol.SignedToneInfoPairs(c.identity(p), bookID), ticket, p.DeviceID, protocol.VersionName, nil)
-		raw, _, err := c.doRaw(ctx, "GET", c.apiOrigin+protocol.PathAudioToneInfo+"?"+rawQuery, anonymousHeaders(c, p, ticket, headers), nil)
-		if err != nil {
-			return nil, err
-		}
-		return protocol.ParseToneInfo(raw)
+		return c.fetchToneInfo(ctx, p, bookID)
 	})
+}
+
+// fetchToneInfo 在已备好的搜索游客身份上拉一本书的音色表。
+func (c *Client) fetchToneInfo(ctx context.Context, p *DeviceProfile, bookID string) (*model.ToneInfo, error) {
+	ticket := c.clock().UnixMilli()
+	rawQuery, headers := sign.SignGET(protocol.SignedToneInfoPairs(c.identity(p), bookID), ticket, p.DeviceID, protocol.VersionName, nil)
+	raw, _, err := c.doRaw(ctx, "GET", c.apiOrigin+protocol.PathAudioToneInfo+"?"+rawQuery, anonymousHeaders(c, p, ticket, headers), nil)
+	if err != nil {
+		return nil, err
+	}
+	return protocol.ParseToneInfo(raw)
+}
+
+// defaultAudioTone 定一本书在调用方未指定音色（tone_id=0）时该用的
+// 音色：有真人主播音色的书用 0（主播原声）；纯 TTS 书用服务端推荐
+// 音色，没有推荐值时用列表里的第一个。结果按 book_id 缓存，逐章
+// 播放不重复查音色表；查不到音色表时退回 0（保持旧行为）。
+func (c *Client) defaultAudioTone(ctx context.Context, p *DeviceProfile, bookID string) int {
+	c.audioToneMu.Lock()
+	if c.audioTones != nil {
+		if tone, ok := c.audioTones[bookID]; ok {
+			c.audioToneMu.Unlock()
+			return tone
+		}
+	}
+	c.audioToneMu.Unlock()
+	tone := 0
+	if ti, err := c.fetchToneInfo(ctx, p, bookID); err == nil && ti != nil {
+		switch {
+		case ti.HasAudioTones:
+			tone = 0
+		case ti.RecommendTone > 0:
+			tone = ti.RecommendTone
+		case len(ti.TTSToneIDs) > 0:
+			tone = ti.TTSToneIDs[0]
+		}
+	} else {
+		// 音色表都拉不到就别缓存：下次调用再试。
+		return 0
+	}
+	c.audioToneMu.Lock()
+	if c.audioTones == nil {
+		c.audioTones = make(map[string]int)
+	}
+	c.audioTones[bookID] = tone
+	c.audioToneMu.Unlock()
+	return tone
 }
 
 // ChapterContent 读取一章小说正文并解密。正文的内容键与设备身份绑定，

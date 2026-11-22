@@ -1737,11 +1737,26 @@ data class Suggestion(
 data class ToneInfo(
     val relateNovelId: String = "",
     val hasTones: Boolean = false,
+    /**
+     * HasAudioTones 表示本书有真人主播录制音色（audio_tones 非空）：
+     * 这类书 playinfo 用 tone_id=0 即主播原声。
+     */
+    val hasAudioTones: Boolean = false,
+    /**
+     * RecommendTone 是服务端推荐的 TTS 音色 id（recommend_tone）；
+     * 纯 TTS 书没有 0 号音色，playinfo 必须传真实音色 id。
+     */
+    val recommendTone: Int = 0,
+    /** TTSToneIDs 是本书可用的 TTS 音色 id 列表（tts_tones）。 */
+    val ttsToneIds: List<Int> = emptyList(),
 ) {
     /** 编码成与 Go SDK 相同的 JSON。 */
     fun toJson(): JSONObject = JSONObject().apply {
         put("relate_novel_id", relateNovelId)
         put("has_tones", hasTones)
+        put("has_audio_tones", hasAudioTones)
+        put("recommend_tone", recommendTone)
+        put("tts_tone_ids", JSONArray(ttsToneIds))
     }
 
     companion object {
@@ -1749,6 +1764,9 @@ data class ToneInfo(
         fun fromJson(o: JSONObject): ToneInfo = ToneInfo(
             relateNovelId = o.opt("relate_novel_id").asString(),
             hasTones = o.opt("has_tones").asBoolean(),
+            hasAudioTones = o.opt("has_audio_tones").asBoolean(),
+            recommendTone = o.opt("recommend_tone").asInt(),
+            ttsToneIds = o.opt("tts_tone_ids").asList { it.asInt() },
         )
     }
 }

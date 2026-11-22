@@ -56,6 +56,10 @@ type Client struct {
 	// 设备轮换后旧键自动失效（键与注册时的设备绑定）。
 	contentKeyMu sync.Mutex
 	contentKeys  map[string]string
+	// audioToneMu 保护 audioTones：一本书的默认音色 id 解析结果按
+	// book_id 缓存（见 reader.go 的 defaultAudioTone），逐章播放不重复查。
+	audioToneMu sync.Mutex
+	audioTones  map[string]int
 	// signMode 是播放取址的计算方式（见 remote_sign.go 的 SigningMode*），
 	// 由绑定层按用户设置写入；0 = 本地计算（默认）。只影响播放取址。
 	signMode atomic.Int32
