@@ -3081,8 +3081,15 @@ func ParseToneInfo(raw []byte) (*model.ToneInfo, error) {
 			}
 		}
 	}
+	relateNovelID := env.Data.RelateNovelID.String()
+	if relateNovelID == "0" {
+		// 服务端未填关联小说时 relate_novel_bookid 返回数字 0，不是合法 id；
+		// 归一化为空串，避免下游把 "0" 误当成有声书关联 id
+		//（《撩完藏族老板后》因此被误判有声书入口、听书只试 tone 0 报 NO_THIS_TONE）。
+		relateNovelID = ""
+	}
 	return &model.ToneInfo{
-		RelateNovelID: env.Data.RelateNovelID.String(),
+		RelateNovelID: relateNovelID,
 		HasTones:      has(env.Data.Tones) || has(env.Data.TTSTones),
 		HasAudioTones: has(env.Data.AudioTones),
 		RecommendTone: env.Data.RecommendTone,
