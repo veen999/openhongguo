@@ -273,40 +273,121 @@ func (c *Client) fridaProfileCached(ctx context.Context) (*fridaServiceProfile, 
 	return prof, nil
 }
 
-// resolvePlaybackViaFrida：身份与签名都来自 frida 服务。查询串的合并
-// 规则与服务方客户端一致：业务参数在前，身份字段覆盖同名键，最后
-// 追加 ts 与 _rticket；签好的六头与服务档案的 UA 一起发出。
+// fridaTabHosts 是 frida 取址的主机顺序，与服务方客户端一致：B 主机
+// 优先，其次 reading.snssdk.com。A 主机（apiOrigin）对 video_tab 单集
+// 固定回 ILLEGAL_ACCESS(110)——2026-11-23 在沙箱、盒子与用户手机
+// （frida 真签名）三处一致——旧实现只打 A 主机是 frida 一直报错的根源。
+func (c *Client) fridaTabHosts() []string {
+	first := c.multiOrigin()
+	hosts := []string{first}
+	if first != "https://reading.snssdk.com" {
+		hosts = append(hosts, "https://reading.snssdk.com")
+	}
+	return hosts
+}
+
+// resolvePlaybackViaFrida：身份与签名都来自 frida 服务。取址顺序与
+// 服务方客户端一致：video_tab 单集（双主机轮换）优先，全灭再退
+// video_tab 多集。查询串的合并规则同样对齐：业务参数在前，服务档案
+// 的身份字段覆盖同名键（档案之外的字段不进查询串），最后追加 ts 与
+// _rticket；签好的六头与服务档案的 UA 一起发出。单个主机的空响应或
+// 错误码只跳过该主机，签名服务本身的错误立即上抛。
 func (c *Client) resolvePlaybackViaFrida(ctx context.Context, episodeID string) (*model.Playback, error) {
 	prof, err := c.fridaProfileCached(ctx)
 	if err != nil {
 		return nil, err
 	}
+	single := [][2]string{
+		{"video_id", episodeID},
+		{"source", "0"},
+		{"need_all_video_definition", "true"},
+	}
+	var lastErr error
+	for _, origin := range c.fridaTabHosts() {
+		raw, signFailed, err := c.fridaTabGET(ctx, prof, origin+protocol.PathVideoTabModel, single)
+		if signFailed {
+			// 签名服务错误与主机无关，直接上抛。
+			return nil, err
+		}
+		if err != nil {
+			lastErr = err
+			continue
+		}
+		if len(bytes.TrimSpace(raw)) == 0 {
+			continue
+		}
+		playback, perr := parseTabPlayback(raw, episodeID)
+		if playback != nil {
+			return playback, perr
+		}
+		lastErr = perr
+	}
+	multi := [][2]string{
+		{"video_id", episodeID},
+		{"video_id_type", "0"},
+		{"device_level", "1"},
+		{"need_all_video_definition", "1"},
+		{"need_mp4_align", "0"},
+		{"use_os_player", "0"},
+		{"video_platform", "1024"},
+		{"source", "0"},
+		{"from_video_id", ""},
+	}
+	for _, origin := range c.fridaTabHosts() {
+		raw, signFailed, err := c.fridaTabGET(ctx, prof, origin+protocol.PathVideoTabMulti, multi)
+		if signFailed {
+			return nil, err
+		}
+		if err != nil {
+			lastErr = err
+			continue
+		}
+		if len(bytes.TrimSpace(raw)) == 0 {
+			continue
+		}
+		playback, perr := finishMultiPlayback(raw, episodeID)
+		if playback != nil {
+			return playback, perr
+		}
+		lastErr = perr
+	}
+	if lastErr != nil {
+		return nil, lastErr
+	}
+	return nil, ErrAnonymousLimited
+}
+
+// fridaTabGET 组装并发出一次 frida 签名的 video_tab GET。signFailed
+// 为真表示签名服务本身出错（与主机无关，调用方应立即上抛）；其余
+// err 是该主机的传输失败，调用方换下一主机继续。
+func (c *Client) fridaTabGET(ctx context.Context, prof *fridaServiceProfile, fullBase string, business [][2]string) (raw []byte, signFailed bool, err error) {
 	ticket := c.clock().UnixMilli()
-	var pairs [][2]string
-	seen := make(map[string]bool)
-	add := func(k, v string) {
-		if !seen[k] {
-			seen[k] = true
+	pairs := make([][2]string, 0, len(business)+len(fridaIdentityKeys)+2)
+	pairs = append(pairs, business...)
+	for _, k := range fridaIdentityKeys {
+		v, ok := prof.params[k]
+		if !ok {
+			continue
+		}
+		replaced := false
+		for i := range pairs {
+			if pairs[i][0] == k {
+				pairs[i][1] = v
+				replaced = true
+				break
+			}
+		}
+		if !replaced {
 			pairs = append(pairs, [2]string{k, v})
 		}
 	}
-	add("video_id", episodeID)
-	add("source", "0")
-	add("need_all_video_definition", "true")
-	for _, k := range fridaIdentityKeys {
-		if v, ok := prof.params[k]; ok {
-			add(k, v)
-		}
-	}
-	for k, v := range prof.params {
-		add(k, v)
-	}
-	add("ts", strconv.FormatInt(ticket/1000, 10))
-	add("_rticket", strconv.FormatInt(ticket, 10))
-	fullURL := c.apiOrigin + protocol.PathVideoTabModel + "?" + encodeRemoteQuery(pairs)
+	pairs = append(pairs,
+		[2]string{"ts", strconv.FormatInt(ticket/1000, 10)},
+		[2]string{"_rticket", strconv.FormatInt(ticket, 10)})
+	fullURL := fullBase + "?" + encodeRemoteQuery(pairs)
 	sigs, err := c.fridaSign(ctx, fullURL)
 	if err != nil {
-		return nil, err
+		return nil, true, err
 	}
 	headers := map[string]string{
 		"Accept":                    "application/json; charset=utf-8,application/x-protobuf",
@@ -321,11 +402,11 @@ func (c *Client) resolvePlaybackViaFrida(ctx context.Context, episodeID string) 
 	for k, v := range sigs {
 		headers[k] = v
 	}
-	raw, _, err := c.doRaw(ctx, "GET", fullURL, headers, nil)
+	raw, _, err = c.doRaw(ctx, "GET", fullURL, headers, nil)
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
-	return parseTabPlayback(raw, episodeID)
+	return raw, false, nil
 }
 
 // fridaSign 调用 frida 服务的 POST /sign：请求 {"url": 完整待签 URL}，

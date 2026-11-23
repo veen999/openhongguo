@@ -212,63 +212,35 @@ func (c *Client) tryPlaybackChannel(ctx context.Context, plan chainPlan, name st
 	return c.attemptPlaybackChannel(ctx, name, attempt)
 }
 
-// mobileV5UA is the User-Agent the v5 playback request carries: the
-// official 7.3.9.32 client on the PGT-AN10 profile the v5 query
-// presents (the query itself pins 7.4.3.32; the mismatch is the
-// published protocol's own and is kept verbatim).
-const mobileV5UA = "com.phoenix.read/73932 (Linux; U; Android 12; zh_CN_#Hans; PGT-AN10; Build/V417IR;tt-ok/3.12.13.20)"
-
 // resolvePlaybackViaMobileV5 fetches the playback model through the
-// mobile v5 channel: POST /novel/player/multi_video_model/player/v1
-// on the A host, gzipped body, the reduced official-mobile query
-// profile (7.4.3.32 / vivo_8662_64 / PGT-AN10) carrying only the
-// playback identity's device_id / iid / cdid, signed with
-// sign.SignPlaybackV5 (x-khronos / x-helios / x-medusa only — the old
-// signature headers are forgery markers under v5). No cookie rides
-// along. The model sits at data[<content type>][episode].video_model.
-//
-// mixed_video_id_map is keyed by the episode's content type: 1004 for
-// regular series (short plays and comics alike), 1001 for PUGC
-// episodes (UGC album entries). ResolvePlayback only receives an
-// episode id, so the id is filed under both keys in one request —
-// the server answers under the key that matches the episode and
-// ignores the other (verified live for both kinds).
+// v5-signer channel in the form the service currently accepts
+// (upstream PR #23, live-verified 2026-11-23): POST
+// /novel/player/multi_video_model/v1/ on the A host, PLAINTEXT body
+// (device_level 4, no dr_scene), the full 7.4.3.32 query profile
+// (protocol.PlaybackV5Pairs, ts filled by the signer), signed with
+// the client's PlaybackV5Signer whose constants carry the
+// v04.06.04 profile (x-khronos / x-helios / x-medusa + x-ss-stub).
+// No cookie rides along. The model sits flat at
+// data[<episode>].video_model (finishMobileV5Playback also accepts
+// the older nested layouts).
 func (c *Client) resolvePlaybackViaMobileV5(ctx context.Context, p *DeviceProfile, episodeID string) (*model.Playback, error) {
-	body := []byte(fmt.Sprintf(`{"biz_param":{"detail_page_version":0,"device_level":1,"disable_digg_stat":false,"disable_video_relate_book":false,"need_all_video_definition":true,"need_mp4_align":false,"use_os_player":false,"use_server_dns":false,"video_platform":1024},"mixed_video_id_map":{"1004":["%s"],"1001":["%s"]},"dr_scene":"player"}`, episodeID, episodeID))
-	gz, err := gzipBytes(body)
+	body, err := protocol.PlaybackV5Body(episodeID)
 	if err != nil {
 		return nil, err
 	}
-	pairs := [][2]string{
-		{"aid", protocol.AID},
-		{"app_name", "novelread"},
-		{"version_code", "74332"},
-		{"version_name", "7.4.3.32"},
-		{"channel", "vivo_8662_64"},
-		{"device_platform", "android"},
-		{"device_type", "PGT-AN10"},
-		{"os_version", "12"},
-		{"update_version_code", "74332"},
-		{"iid", p.InstallID},
-		{"cdid", p.CDID},
-		{"device_id", p.DeviceID},
-	}
 	ticket := c.clock().UnixMilli()
-	rawQuery, headers := sign.SignPlaybackV5(pairs, ticket, sign.V5Identity{
-		DeviceID:    p.DeviceID,
-		VersionName: "7.4.3.32",
-		Channel:     "vivo_8662_64",
-		OSVersion:   "12",
-		DeviceType:  "PGT-AN10",
-	}, gz, nil)
+	rawQuery, headers, err := c.playbackSigner.Sign(protocol.PlaybackV5Pairs(c.identity(p)), ticket, body, nil)
+	if err != nil {
+		return nil, err
+	}
 	h := make(map[string]string, len(headers)+3)
 	for k, v := range headers {
 		h[k] = v
 	}
-	h["User-Agent"] = mobileV5UA
-	h["Accept"] = "application/json"
-	h["Content-Encoding"] = "gzip"
-	raw, _, err := c.doRaw(ctx, "POST", c.apiOrigin+protocol.PathPlaybackMobileV5+"?"+rawQuery, h, gz)
+	h["User-Agent"] = protocol.PlaybackUserAgent(c.deviceOf(p))
+	h["Accept"] = "application/json; charset=utf-8,application/x-protobuf"
+	h["x-xs-from-web"] = "0"
+	raw, _, err := c.doRaw(ctx, "POST", c.apiOrigin+protocol.PathPlaybackV5+"?"+rawQuery, h, body)
 	if err != nil {
 		return nil, err
 	}
@@ -489,7 +461,7 @@ func (c *Client) resolvePlaybackViaTab(ctx context.Context, episodeID string) (*
 	}
 	ticket := c.clock().UnixMilli()
 	rawQuery, headers := sign.SignGET(protocol.SignedVideoTabPairs(c.identity(p), episodeID), ticket, p.DeviceID, protocol.VersionName, nil)
-	raw, _, err := c.doRaw(ctx, "GET", c.apiOrigin+protocol.PathVideoTabModel+"?"+rawQuery, anonymousHeaders(c, p, ticket, headers), nil)
+	raw, _, err := c.doRaw(ctx, "GET", c.multiOrigin()+protocol.PathVideoTabModel+"?"+rawQuery, anonymousHeaders(c, p, ticket, headers), nil)
 	if err != nil {
 		return nil, err
 	}

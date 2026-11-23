@@ -8,7 +8,6 @@ import (
 
 	"github.com/beilunyang/openhongguo/internal/protocol"
 	"github.com/beilunyang/openhongguo/sdk/model"
-	"github.com/beilunyang/openhongguo/internal/protocol/sign"
 )
 
 // batchV5ChunkSize 是一次移动端 v5 批量请求最多携带的集数。响应按每集
@@ -117,41 +116,22 @@ func (c *Client) resolveBatchV5Raw(ctx context.Context, p *DeviceProfile, ids []
 		quoted[i] = `"` + id + `"`
 	}
 	list := strings.Join(quoted, ",")
-	body := []byte(fmt.Sprintf(`{"biz_param":{"detail_page_version":0,"device_level":1,"disable_digg_stat":false,"disable_video_relate_book":false,"need_all_video_definition":true,"need_mp4_align":false,"use_os_player":false,"use_server_dns":false,"video_platform":1024},"mixed_video_id_map":{"1004":[%s],"1001":[%s]},"dr_scene":"player"}`, list, list))
-	gz, err := gzipBytes(body)
+	// 与单集同一版式（明文、device_level 4、无 dr_scene），只是
+	// mixed_video_id_map 的两个列表各装多集。
+	body := []byte(fmt.Sprintf(`{"biz_param":{"detail_page_version":0,"device_level":4,"disable_digg_stat":false,"disable_video_relate_book":false,"need_all_video_definition":true,"need_mp4_align":false,"use_os_player":false,"use_server_dns":false,"video_platform":1024},"mixed_video_id_map":{"1004":[%s],"1001":[%s]}}`, list, list))
+	ticket := c.clock().UnixMilli()
+	rawQuery, headers, err := c.playbackSigner.Sign(protocol.PlaybackV5Pairs(c.identity(p)), ticket, body, nil)
 	if err != nil {
 		return nil, err
 	}
-	pairs := [][2]string{
-		{"aid", protocol.AID},
-		{"app_name", "novelread"},
-		{"version_code", "74332"},
-		{"version_name", "7.4.3.32"},
-		{"channel", "vivo_8662_64"},
-		{"device_platform", "android"},
-		{"device_type", "PGT-AN10"},
-		{"os_version", "12"},
-		{"update_version_code", "74332"},
-		{"iid", p.InstallID},
-		{"cdid", p.CDID},
-		{"device_id", p.DeviceID},
-	}
-	ticket := c.clock().UnixMilli()
-	rawQuery, headers := sign.SignPlaybackV5(pairs, ticket, sign.V5Identity{
-		DeviceID:    p.DeviceID,
-		VersionName: "7.4.3.32",
-		Channel:     "vivo_8662_64",
-		OSVersion:   "12",
-		DeviceType:  "PGT-AN10",
-	}, gz, nil)
 	h := make(map[string]string, len(headers)+3)
 	for k, v := range headers {
 		h[k] = v
 	}
-	h["User-Agent"] = mobileV5UA
-	h["Accept"] = "application/json"
-	h["Content-Encoding"] = "gzip"
-	raw, _, err := c.doRaw(ctx, "POST", c.apiOrigin+protocol.PathPlaybackMobileV5+"?"+rawQuery, h, gz)
+	h["User-Agent"] = protocol.PlaybackUserAgent(c.deviceOf(p))
+	h["Accept"] = "application/json; charset=utf-8,application/x-protobuf"
+	h["x-xs-from-web"] = "0"
+	raw, _, err := c.doRaw(ctx, "POST", c.apiOrigin+protocol.PathPlaybackV5+"?"+rawQuery, h, body)
 	if err != nil {
 		return nil, err
 	}

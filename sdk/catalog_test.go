@@ -74,7 +74,6 @@ func happyHandler(t *testing.T, seen *[]captured) http.Handler {
 		protocol.PathSearch:                                     "search-response.json",
 		protocol.PathSeries:                                     "series-response.json",
 		protocol.PathPlayback:                                   "drm-playback.json",
-		protocol.PathPlaybackMobileV5:                           "drm-playback-v5.json",
 		protocol.PathPlaybackMulti:                              "drm-playback.json",
 		fmt.Sprintf(protocol.PathPlaybackMultiV2Fmt, "default"): "drm-playback.json",
 		protocol.PathVideoTabMulti:                              "drm-playback.json",
@@ -83,6 +82,14 @@ func happyHandler(t *testing.T, seen *[]captured) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		body, _ := io.ReadAll(r.Body)
 		*seen = append(*seen, captured{Method: r.Method, Path: r.URL.Path, RawQuery: r.URL.RawQuery, Header: r.Header.Clone(), Body: string(body)})
+		// v5 通道与 multi 通道共用 multi_video_model/v1/ 路径：明文
+		// （无 Content-Encoding）的请求是 v5 通道，发 v5 样本；gzip
+		// 的是 multi 通道，走下面的映射表。
+		if r.URL.Path == protocol.PathPlaybackV5 && r.Header.Get("Content-Encoding") != "gzip" {
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write(fixture(t, "drm-playback-v5.json"))
+			return
+		}
 		name, ok := files[r.URL.Path]
 		if !ok {
 			http.NotFound(w, r)
@@ -453,7 +460,22 @@ func assertAnonymousWire(t *testing.T, seen []captured) {
 		case protocol.PathPlaybackMulti, fmt.Sprintf(protocol.PathPlaybackMultiV2Fmt, "default"):
 			played = true
 			if hit.Header.Get("Content-Encoding") != "gzip" {
-				t.Fatal("multi playback body is not gzipped")
+				// 与 multi 共用路径的 v5 通道（明文版式）：签名头三件套
+				// + stub，不带已退役的旧签名头，query 带 ts。
+				if hit.Method != http.MethodPost {
+					t.Fatalf("mobile v5 method %s", hit.Method)
+				}
+				if hit.Header.Get("x-medusa") == "" || hit.Header.Get("x-khronos") == "" || hit.Header.Get("x-helios") == "" || hit.Header.Get("x-ss-stub") == "" {
+					t.Fatal("mobile v5 signature missing")
+				}
+				if hit.Header.Get("x-argus") != "" || hit.Header.Get("x-ladon") != "" || hit.Header.Get("x-gorgon") != "" {
+					t.Fatal("mobile v5 carries retired signature headers")
+				}
+				q, _ := url.ParseQuery(hit.RawQuery)
+				if q.Get("version_code") != "74332" || q.Get("device_id") == "" || q.Get("ts") == "" {
+					t.Fatalf("mobile v5 query = %s", hit.RawQuery)
+				}
+				break
 			}
 			if hit.Header.Get("x-gorgon") == "" || hit.Header.Get("x-ss-stub") == "" {
 				t.Fatal("multi playback signature missing")
@@ -470,24 +492,6 @@ func assertAnonymousWire(t *testing.T, seen []captured) {
 			}
 			if hit.Header.Get("x-gorgon") == "" {
 				t.Fatal("tab multi signature missing")
-			}
-		case protocol.PathPlaybackMobileV5:
-			played = true
-			if hit.Method != http.MethodPost {
-				t.Fatalf("mobile v5 method %s", hit.Method)
-			}
-			if hit.Header.Get("Content-Encoding") != "gzip" {
-				t.Fatal("mobile v5 body is not gzipped")
-			}
-			if hit.Header.Get("x-medusa") == "" || hit.Header.Get("x-khronos") == "" || hit.Header.Get("x-helios") == "" || hit.Header.Get("x-ss-stub") == "" {
-				t.Fatal("mobile v5 signature missing")
-			}
-			if hit.Header.Get("x-argus") != "" || hit.Header.Get("x-ladon") != "" || hit.Header.Get("x-gorgon") != "" {
-				t.Fatal("mobile v5 carries retired signature headers")
-			}
-			q, _ := url.ParseQuery(hit.RawQuery)
-			if q.Get("version_code") != "74332" || q.Get("device_id") == "" {
-				t.Fatalf("mobile v5 query = %s", hit.RawQuery)
 			}
 		case protocol.PathVideoTabModel:
 			// Singular tab fallback probe; the fixture server 404s it and

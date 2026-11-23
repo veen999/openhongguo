@@ -32,7 +32,7 @@ func (f *policyFake) handler(req *Request) (*Response, error) {
 	case strings.Contains(url, "feature-hash"):
 		return &Response{StatusCode: 200, Headers: map[string]string{},
 			Body: []byte(`{"headers":` + sixHeadersJSON + `}`)}, nil
-	case strings.Contains(url, "multi_video_model/player/v1"):
+	case strings.Contains(url, "multi_video_model/v1"):
 		// 服务重签后的 v5 请求带占位 medusa（"m"）：对其发模型，模拟
 		// 本地签名被平台拒发、远程签名可发的情形；serveV5 置位则模拟
 		// 本地通道恢复，本地签名的请求也发模型。
