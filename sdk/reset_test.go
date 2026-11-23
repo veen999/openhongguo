@@ -112,16 +112,19 @@ func TestEmptyPlaybackGivesUpAfterDefaultResets(t *testing.T) {
 	// multi×2 + tab-multi + tab-multi 重试 + tab 单集 + player 单集
 	// 收尾）；withFreshDevice 默认 2 次重置共 3 轮（注册跨轮复用，
 	// 单链合计 7 次注册、24 次播放请求）。默认客户端锚点为本地计算，
-	// 本地链全空后策略层当场切到 unidbg 并整链重试一次（案二一次
-	// 直达）：播放请求翻倍为 48；第二链的播放身份已被首链丢弃需重
-	// 注、目录游客跨链复用，注册合计 12 次。
+	// 本地链全空后策略层先做多通道复核（2026-11-23 规则：探测完本地
+	// 多个通道、都不可用再换远程）：并发探测 7 通道 + 当前身份顺序
+	// 复核 tab 多集/v5 + 换新鲜播放身份复核 tab 多集，共 +10 次播放
+	// 请求、+1 次注册；确认全不可用才切 unidbg 并整链重试一次：播
+	// 放请求 24+10+24=58；第二链的播放身份已被首链丢弃需重注、目
+	// 录游客跨链复用，注册合计 13 次。
 	s := &devicePerRequest{emptyFor: 99}
 	client, _ := resetClient(t, s.handler(t), nil)
 	_, err := client.ResolvePlayback(context.Background(), "7100000000000201", sdk.PlaybackOptions{})
 	if !errors.Is(err, sdk.ErrAnonymousLimited) {
 		t.Fatalf("err = %v", err)
 	}
-	if s.registers != 12 || s.playbacks != 48 {
+	if s.registers != 13 || s.playbacks != 58 {
 		t.Fatalf("registers = %d playbacks = %d", s.registers, s.playbacks)
 	}
 }
@@ -129,11 +132,12 @@ func TestEmptyPlaybackGivesUpAfterDefaultResets(t *testing.T) {
 func TestZeroDeviceResetsDisablesRecovery(t *testing.T) {
 	// DeviceResets=0 只关目录游客的重置：播放身份自带的一次重注仍在，
 	// 一轮之内注册 3 次（播放×2 + 游客×1）后以受限告终；随后策略层
-	// 切 unidbg 整链重试，播放身份再注册 1 次（游客不重注），合计 4。
+	// 多通道复核时换新鲜播放身份再注册 1 次，确认全不可用后切 unidbg
+	// 整链重试，播放身份再注册 1 次（游客不重注），合计 5。
 	s := &devicePerRequest{emptyFor: 99}
 	client, _ := resetClient(t, s.handler(t), sdk.Int(0))
 	_, err := client.ResolvePlayback(context.Background(), "7100000000000201", sdk.PlaybackOptions{})
-	if !errors.Is(err, sdk.ErrAnonymousLimited) || s.registers != 4 {
+	if !errors.Is(err, sdk.ErrAnonymousLimited) || s.registers != 5 {
 		t.Fatalf("err = %v registers = %d", err, s.registers)
 	}
 }

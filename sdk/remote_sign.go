@@ -96,20 +96,61 @@ func (c *Client) SetSigningModeAuto(mode string) {
 	c.effSignMode.Store(next)
 }
 
-// localFailureLimit 是本地方式连续取址失败多少次后自动切换到
-// 远程计算-unidbg。用户裁定（2026-11-20，案二）：失败 1 次即当场
-// 切换并在同一次取址内重试，播放不出现失败界面、不需用户点重试。
-const localFailureLimit = 1
-
-// noteLocalFailure 记录一次本地取址失败；达到阈值时把实际生效方式
-// 切到 unidbg 并返回 true，调用方应用新方式重试本次取址。
-func (c *Client) noteLocalFailure() bool {
-	if c.localFailCount.Add(1) < localFailureLimit {
+// noteLocalFailure 处理一次本地全链取址失败，决定要不要切到远程
+// 计算-unidbg。用户规则（2026-11-23 定版，取代 2026-11-20 案二的
+// 「失败 1 次即切」）：先探测完本地多个通道是否可用，都不可用再换
+// 远程——全链失败一次不等于本地全灭（新播放身份在平台试用期内会
+// 整片空返、通道也会逐个开关），必须经多通道复核确认。复核发现任
+// 一本地通道可用 → 返回 false（不切，调用方按本地再跑一遍全链）；
+// 全部确认不可用 → 把实际生效方式切到 unidbg 并返回 true，调用方
+// 用新方式重试本次取址。
+func (c *Client) noteLocalFailure(ctx context.Context, episodeID string) bool {
+	if c.localChannelsAlive(ctx, episodeID) {
 		return false
 	}
 	c.localFailCount.Store(0)
 	c.effSignMode.Store(SigningModeUnidbg)
 	return true
+}
+
+// localChannelsAlive 多通道复核本地是否还有可用通道，三段递进：
+// 一、并发探测全部本地通道（ProbePlaybackChannels，结果同时刷新通
+// 道健康表）；二、并发全空时在当前播放身份上顺序单发复核 tab 多集
+// 与 v5——并发齐射本身会把身份打空（预加载多集齐发即是此形），且
+// 身份随存活时长逐通道解封，顺序单发是实测最可靠的确认方式；三、
+// 仍全空才丢弃播放身份、换新鲜身份复核 tab 多集。任一处拿到模型
+// 即本地可用。探测全程绕过传输层重签，测的是本地签名本身。
+func (c *Client) localChannelsAlive(ctx context.Context, episodeID string) bool {
+	probeCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+	probeCtx = withResignBypass(probeCtx)
+	for _, alive := range c.ProbePlaybackChannels(probeCtx) {
+		if alive {
+			return true
+		}
+	}
+	pb, err := c.playbackIdentity(probeCtx)
+	if err != nil {
+		return false
+	}
+	if playback, _ := c.resolvePlaybackViaTabMulti(probeCtx, pb, episodeID); playback != nil {
+		c.noteChannelOutcome(probeCtx, channelTabMulti, playback, nil)
+		return true
+	}
+	if playback, _ := c.resolvePlaybackViaMobileV5(probeCtx, pb, episodeID); playback != nil {
+		c.noteChannelOutcome(probeCtx, channelV5, playback, nil)
+		return true
+	}
+	c.dropPlaybackIdentityIf(pb)
+	pb2, err := c.playbackIdentity(probeCtx)
+	if err != nil {
+		return false
+	}
+	if playback, _ := c.resolvePlaybackViaTabMulti(probeCtx, pb2, episodeID); playback != nil {
+		c.noteChannelOutcome(probeCtx, channelTabMulti, playback, nil)
+		return true
+	}
+	return false
 }
 
 // noteResolveSuccess 处理一次取址成功后的策略动作：本地成功清零失败
@@ -123,9 +164,11 @@ func (c *Client) noteResolveSuccess(mode int32, episodeID string) {
 	c.probeLocalAsync(episodeID)
 }
 
-// probeLocalAsync 用播放身份单测 v5 通道是否恢复：只探不取，结果不
-// 用于本次播放；单飞运行；探测走内存播放身份，不触碰目录游客身份，
-// 失败不影响任何正在使用的身份。
+// probeLocalAsync 远程生效期间后台复探本地是否恢复：与切换判定同一
+// 口径——多通道复核（localChannelsAlive），任一本地通道恢复即切回
+// 本地（旧实现只探 v5 一条，平台只开 tab 多集的时段里永远切不回
+// 来）。只探不取，结果不用于本次播放；单飞运行；探测走内存播放
+// 身份，不触碰目录游客身份，失败不影响任何正在使用的身份。
 func (c *Client) probeLocalAsync(episodeID string) {
 	if !c.localProbeRunning.CompareAndSwap(false, true) {
 		return
@@ -137,11 +180,7 @@ func (c *Client) probeLocalAsync(episodeID string) {
 		// 探活测的是本地签名：绕过传输层重签，否则远程签名会把探活
 		// 请求也签成远程的，本地没恢复也会误判为已恢复。
 		ctx = withResignBypass(ctx)
-		pb, err := c.playbackIdentity(ctx)
-		if err != nil {
-			return
-		}
-		if playback, _ := c.resolvePlaybackViaMobileV5(ctx, pb, episodeID); playback != nil {
+		if c.localChannelsAlive(ctx, episodeID) {
 			c.effSignMode.Store(SigningModeLocal)
 			c.localFailCount.Store(0)
 		}

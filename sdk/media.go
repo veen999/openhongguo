@@ -50,11 +50,19 @@ func (c *Client) ResolvePlayback(ctx context.Context, episodeID string, _ Playba
 		c.noteResolveSuccess(mode, episodeID)
 		return playback, err
 	}
-	// 算法策略层：用户选的是本地、本次也是按本地取的，失败一次即把
-	// 实际生效方式切到远程计算-unidbg，并用新方式重试本次取址（案二
-	// 一次直达，播放不出现失败界面）；远程方式成功后的本地恢复探测
-	// 见 noteResolveSuccess。
-	if c.signingMode() == SigningModeLocal && mode == SigningModeLocal && c.noteLocalFailure() {
+	// 算法策略层：用户选的是本地、本次也是按本地取的，全链失败后先按
+	// 多通道复核本地是否真的全不可用（noteLocalFailure），确认全不可
+	// 用才切远程计算-unidbg 并用新方式重试本次取址（播放不出现失败
+	// 界面）；复核发现本地仍有通道可用则按本地再跑一遍全链。远程方
+	// 式成功后的本地恢复探测见 noteResolveSuccess。
+	if c.signingMode() == SigningModeLocal && mode == SigningModeLocal {
+		if !c.noteLocalFailure(ctx, episodeID) {
+			if playback, err := c.resolvePlaybackChain(ctx, episodeID, SigningModeLocal); playback != nil {
+				c.noteResolveSuccess(SigningModeLocal, episodeID)
+				return playback, err
+			}
+			c.effSignMode.Store(SigningModeUnidbg)
+		}
 		if playback, err := c.resolvePlaybackChain(ctx, episodeID, SigningModeUnidbg); playback != nil {
 			c.noteResolveSuccess(SigningModeUnidbg, episodeID)
 			return playback, err
