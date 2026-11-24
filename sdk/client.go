@@ -35,6 +35,7 @@ type Client struct {
 	guestMu        sync.Mutex
 	playbackMu     sync.Mutex
 	playbackProf   *DeviceProfile
+	playbackRegAt  time.Time
 	transport      Transport
 	profileStore   ProfileStore
 	signer         Signer
@@ -51,6 +52,9 @@ type Client struct {
 	retryAttempts int
 	// deviceResets 是一次调用最多换几台新设备（0 表示不换）。
 	deviceResets int
+	// probationWindow 是本地复核采用的试用期时长（构造时由
+	// Options.ProbationWindow 或默认 probationTargetAge 定版）。
+	probationWindow time.Duration
 	resetter     deviceResetter
 	// contentKeyMu 保护 contentKeys：小说正文的内容键按设备 id 缓存，
 	// 设备轮换后旧键自动失效（键与注册时的设备绑定）。
@@ -122,6 +126,10 @@ func NewClient(opts Options) (*Client, error) {
 	if opts.DeviceResets != nil {
 		resets = max(*opts.DeviceResets, 0)
 	}
+	probation := opts.ProbationWindow
+	if probation == 0 {
+		probation = probationTargetAge
+	}
 	if err := opts.Device.Validate(); err != nil {
 		return nil, fmt.Errorf("%w: %v", ErrInvalidOptions, err)
 	}
@@ -137,6 +145,7 @@ func NewClient(opts Options) (*Client, error) {
 		device:        opts.Device.OrDefault(),
 		retryAttempts: attempts,
 		deviceResets:  resets,
+		probationWindow: probation,
 		transport:     transport, profileStore: opts.ProfileStore,
 		signer:         opts.Signer,
 		playbackSigner: sign.NewPlaybackV5Signer(opts.Clock().UnixMilli()),

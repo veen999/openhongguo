@@ -61,6 +61,11 @@ type Options struct {
 	// nil 表示默认的 2 次；sdk.Int(0) 表示关闭，交给调用方自己调用 ResetDevice。
 	// 换设备会覆盖 ProfileStore 里保存的档案，并通过 Logger 记一行日志。
 	DeviceResets *int
+	// ProbationWindow 是新播放身份的平台试用期时长：本地取址全链失
+	// 败后的多通道复核中，当前身份年龄不足该时长时全灭结论不可信，
+	// 复核会在同一身份上间隔复探到年龄达标再下结论。0 表示默认
+	// 75 秒；负值关闭试用期复探（第一轮全灭即按确认处理）。
+	ProbationWindow time.Duration
 }
 
 // Int 返回指向 v 的指针，用来设置 Options.DeviceResets 这类可选的整数字段，

@@ -21,6 +21,19 @@ const tabModelJSON = `{"code":0,"data":{"video_model":{"status":10,"video_id":"7
 
 type policyFake struct {
 	serveV5 atomic.Bool
+	// recoverAt（UnixNano）非 0 时，本地 v5 在该时刻后开始发模型，
+	// 模拟试用期结束、通道随身份存活恢复。
+	recoverAt atomic.Int64
+}
+
+// disableProbation 关掉试用期复探（默认目标年龄设为负值 = 身份永
+// 远已达标，构造客户端时定版），供不测验试用期行为的用例隔离；
+// 测验试用期的用例用 Options.ProbationWindow 显式调小。
+func disableProbation(t *testing.T) {
+	t.Helper()
+	oldT, oldI := probationTargetAge, probationReprobeInterval
+	probationTargetAge = -1
+	t.Cleanup(func() { probationTargetAge, probationReprobeInterval = oldT, oldI })
 }
 
 func (f *policyFake) handler(req *Request) (*Response, error) {
@@ -42,7 +55,7 @@ func (f *policyFake) handler(req *Request) (*Response, error) {
 				medusa = v
 			}
 		}
-		if f.serveV5.Load() || medusa == "m" {
+		if f.serveV5.Load() || medusa == "m" || (f.recoverAt.Load() != 0 && time.Now().UnixNano() > f.recoverAt.Load()) {
 			raw, err := os.ReadFile(filepath.Join("..", "testdata", "protocol", "drm-playback-v5.json"))
 			if err != nil {
 				return nil, err
@@ -75,6 +88,7 @@ func policyTestClient(t *testing.T, fake *policyFake) *Client {
 }
 
 func TestPolicyAutoSwitchOnFirstLocalFailure(t *testing.T) {
+	disableProbation(t)
 	fake := &policyFake{}
 	c := policyTestClient(t, fake)
 	c.SetSigningMode("local")
@@ -92,6 +106,7 @@ func TestPolicyAutoSwitchOnFirstLocalFailure(t *testing.T) {
 }
 
 func TestPolicyProbeSwitchesBackToLocal(t *testing.T) {
+	disableProbation(t)
 	fake := &policyFake{}
 	c := policyTestClient(t, fake)
 	c.SetSigningMode("local")
@@ -143,6 +158,7 @@ func TestSetSigningModeSameValueKeepsPolicyState(t *testing.T) {
 }
 
 func TestSetSigningModeAutoKeepsAnchorAndProbe(t *testing.T) {
+	disableProbation(t)
 	fake := &policyFake{}
 	c := policyTestClient(t, fake)
 	c.SetSigningMode("local")
@@ -177,4 +193,65 @@ func TestSetSigningModeAutoKeepsAnchorAndProbe(t *testing.T) {
 	if got := c.EffectiveSigningMode(); got != "unidbg" {
 		t.Fatalf("auto sync overrode manual selection: effective = %q", got)
 	}
+}
+
+func TestPolicyProbationReprobeRecovers(t *testing.T) {
+	// 试用期场景：本地通道在身份养到一定年龄后恢复。复核不得在第
+	// 一轮全灭时就切远程，必须在同一身份上间隔复探、等到恢复，并
+	// 以本地方式完成本次取址。
+	oldT, oldI := probationTargetAge, probationReprobeInterval
+	probationTargetAge = 4 * time.Second
+	probationReprobeInterval = 1 * time.Second
+	t.Cleanup(func() { probationTargetAge, probationReprobeInterval = oldT, oldI })
+
+	fake := &policyFake{}
+	fake.recoverAt.Store(time.Now().Add(2500 * time.Millisecond).UnixNano())
+	prof, err := NewAnonymousDeviceProfile(nil, time.Now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	prof.DeviceID = "111222"
+	prof.InstallID = "333444"
+	c, err := NewClient(Options{
+		Transport:       remoteStubTransport{handler: fake.handler},
+		ProfileStore:    &remoteStubStore{p: prof},
+		ProbationWindow: 4 * time.Second,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	c.SetSigningMode("local")
+	pb, err := c.ResolvePlayback(context.Background(), policyEpisodeID, PlaybackOptions{})
+	if pb == nil {
+		t.Fatalf("probation resolve should recover locally, err = %v", err)
+	}
+	if got := c.EffectiveSigningMode(); got != "local" {
+		t.Fatalf("effective = %q, want local (probation recovery must not flip)", got)
+	}
+}
+
+func TestStartupProbePreFlipsWhenConfirmedDown(t *testing.T) {
+	disableProbation(t)
+	fake := &policyFake{}
+	c := policyTestClient(t, fake)
+	c.SetSigningMode("local")
+	// 启动式齐射探测全灭 → 后台完整复核确认全灭 → 生效方式预切到
+	// unidbg（锚点仍是本地）。
+	results := c.ProbePlaybackChannels(context.Background())
+	for name, alive := range results {
+		if alive {
+			t.Fatalf("setup: channel %s unexpectedly alive", name)
+		}
+	}
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		if c.EffectiveSigningMode() == "unidbg" {
+			if got := c.signingMode(); got != SigningModeLocal {
+				t.Fatalf("anchor changed by pre-flip: %d", got)
+			}
+			return
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	t.Fatalf("effective = %q, want unidbg after confirmed-down startup probe", c.EffectiveSigningMode())
 }

@@ -82,7 +82,7 @@ func resetClient(t *testing.T, h http.Handler, resets *int) (*sdk.Client, *syncL
 	client, err := sdk.NewClient(sdk.Options{
 		Transport: httptransport.New(), ProfileStore: memstore.New(),
 		APIOrigin: srv.URL, RegisterOrigin: srv.URL, DistributionOrigin: srv.URL,
-		Logger: logs, DeviceResets: resets,
+		Logger: logs, DeviceResets: resets, ProbationWindow: -1,
 		Clock: func() time.Time { return time.UnixMilli(1_700_000_000_123).UTC() },
 	})
 	if err != nil {

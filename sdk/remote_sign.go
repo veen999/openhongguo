@@ -113,17 +113,65 @@ func (c *Client) noteLocalFailure(ctx context.Context, episodeID string) bool {
 	return true
 }
 
-// localChannelsAlive 多通道复核本地是否还有可用通道，三段递进：
+type localConfirmKey struct{}
+
+// withLocalConfirm 标记「已在本地复核流程内」：复核内部的齐射探测
+// 全灭时不再重复触发后台复核（confirmLocalOrFlipAsync），只有应用
+// 启动探测这类独立入口才触发。
+func withLocalConfirm(ctx context.Context) context.Context {
+	return context.WithValue(ctx, localConfirmKey{}, true)
+}
+
+func inLocalConfirm(ctx context.Context) bool {
+	v, _ := ctx.Value(localConfirmKey{}).(bool)
+	return v
+}
+
+// 试用期参数：新播放身份在平台试用期内整片空返，通道随身份存活时
+// 长逐个解封（实测约一分钟）。身份年龄不足 probationTargetAge 时，
+// 一轮全灭说明不了本地不可用，必须在同一身份上间隔复探、等它养过
+// 试用期再下结论。做成变量以便测试调小。
+var (
+	probationTargetAge       = 75 * time.Second
+	probationReprobeInterval = 10 * time.Second
+)
+
+// probeTwoChannels 在给定播放身份上顺序单发复核 tab 多集与 v5，任一
+// 拿到模型即本地可用。顺序单发是实测最可靠的确认方式：并发齐射本
+// 身会把身份打空（预加载多集齐发即是此形）。
+func (c *Client) probeTwoChannels(ctx context.Context, p *DeviceProfile, episodeID string) bool {
+	if playback, _ := c.resolvePlaybackViaTabMulti(ctx, p, episodeID); playback != nil {
+		c.noteChannelOutcome(ctx, channelTabMulti, playback, nil)
+		return true
+	}
+	if playback, _ := c.resolvePlaybackViaMobileV5(ctx, p, episodeID); playback != nil {
+		c.noteChannelOutcome(ctx, channelV5, playback, nil)
+		return true
+	}
+	return false
+}
+
+// localChannelsAlive 多通道复核本地是否还有可用通道，递进确认：
 // 一、并发探测全部本地通道（ProbePlaybackChannels，结果同时刷新通
 // 道健康表）；二、并发全空时在当前播放身份上顺序单发复核 tab 多集
-// 与 v5——并发齐射本身会把身份打空（预加载多集齐发即是此形），且
-// 身份随存活时长逐通道解封，顺序单发是实测最可靠的确认方式；三、
-// 仍全空才丢弃播放身份、换新鲜身份复核 tab 多集。任一处拿到模型
-// 即本地可用。探测全程绕过传输层重签，测的是本地签名本身。
+// 与 v5；二·五、当前身份尚在试用期（年龄不足）时全灭不可信，在同
+// 一身份上间隔复探到年龄达标——试用期一过通道往往自己恢复，丢弃
+// 身份换新的只会把试用期从零重来；三、仍全空才丢弃播放身份、换
+// 新鲜身份复核 tab 多集。任一处拿到模型即本地可用。探测全程绕过
+// 传输层重签，测的是本地签名本身。
 func (c *Client) localChannelsAlive(ctx context.Context, episodeID string) bool {
-	probeCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	// 预算：常规 30 秒；当前身份尚在试用期时放宽到「养到目标年龄
+	// + 常规复核余量」，让试用期复探有时间跑完。
+	budget := 30 * time.Second
+	if age := c.playbackIdentityAge(); age >= 0 && age < c.probationWindow {
+		if need := c.probationWindow - age + 45*time.Second; need > budget {
+			budget = need
+		}
+	}
+	probeCtx, cancel := context.WithTimeout(ctx, budget)
 	defer cancel()
 	probeCtx = withResignBypass(probeCtx)
+	probeCtx = withLocalConfirm(probeCtx)
 	for _, alive := range c.ProbePlaybackChannels(probeCtx) {
 		if alive {
 			return true
@@ -133,13 +181,26 @@ func (c *Client) localChannelsAlive(ctx context.Context, episodeID string) bool 
 	if err != nil {
 		return false
 	}
-	if playback, _ := c.resolvePlaybackViaTabMulti(probeCtx, pb, episodeID); playback != nil {
-		c.noteChannelOutcome(probeCtx, channelTabMulti, playback, nil)
+	if c.probeTwoChannels(probeCtx, pb, episodeID) {
 		return true
 	}
-	if playback, _ := c.resolvePlaybackViaMobileV5(probeCtx, pb, episodeID); playback != nil {
-		c.noteChannelOutcome(probeCtx, channelV5, playback, nil)
-		return true
+	for {
+		age := c.playbackIdentityAge()
+		if age < 0 || age >= c.probationWindow {
+			break
+		}
+		select {
+		case <-probeCtx.Done():
+			return false
+		case <-time.After(probationReprobeInterval):
+		}
+		cur, err := c.playbackIdentity(probeCtx)
+		if err != nil {
+			return false
+		}
+		if c.probeTwoChannels(probeCtx, cur, episodeID) {
+			return true
+		}
 	}
 	c.dropPlaybackIdentityIf(pb)
 	pb2, err := c.playbackIdentity(probeCtx)
@@ -151,6 +212,31 @@ func (c *Client) localChannelsAlive(ctx context.Context, episodeID string) bool 
 		return true
 	}
 	return false
+}
+
+// confirmLocalOrFlipAsync 后台完整复核本地通道（与切换判定同一口
+// 径）：任一通道可用则什么都不做；全部确认不可用且锚点与当前生效
+// 方式都是本地时，把生效方式预切到 unidbg——启动探测全灭时由它给
+// 计算方式打上标记，免得第一集播放现场再付一遍全链失败加复核的
+// 耗时。单飞（与 probeLocalAsync 共用运行标记），避免启动复核、
+// 恢复探测与失败复核叠跑。
+func (c *Client) confirmLocalOrFlipAsync() {
+	if !c.localProbeRunning.CompareAndSwap(false, true) {
+		return
+	}
+	go func() {
+		defer c.localProbeRunning.Store(false)
+		if c.signingMode() != SigningModeLocal || c.effectiveSigningMode() != SigningModeLocal {
+			return
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 150*time.Second)
+		defer cancel()
+		ctx = withResignBypass(ctx)
+		if !c.localChannelsAlive(ctx, probeEpisodeID) {
+			c.localFailCount.Store(0)
+			c.effSignMode.Store(SigningModeUnidbg)
+		}
+	}()
 }
 
 // noteResolveSuccess 处理一次取址成功后的策略动作：本地成功清零失败

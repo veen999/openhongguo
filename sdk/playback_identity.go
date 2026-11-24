@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/url"
 	"strconv"
+	"time"
 
 	"github.com/beilunyang/openhongguo/internal/protocol"
 	"github.com/beilunyang/openhongguo/sdk/model"
@@ -65,7 +66,20 @@ func (c *Client) playbackIdentity(ctx context.Context) (*DeviceProfile, error) {
 		return nil, err
 	}
 	c.playbackProf = p
+	c.playbackRegAt = c.clock()
 	return p, nil
+}
+
+// playbackIdentityAge 返回当前播放身份的存活时长；没有可用身份时
+// 返回 -1。平台对新身份有试用期（整片空返、随存活时长逐通道解封），
+// 复核本地可用性时要按年龄判断全灭结论可不可信。
+func (c *Client) playbackIdentityAge() time.Duration {
+	c.playbackMu.Lock()
+	defer c.playbackMu.Unlock()
+	if !guestReady(c.playbackProf) || c.playbackRegAt.IsZero() {
+		return -1
+	}
+	return c.clock().Sub(c.playbackRegAt)
 }
 
 // dropPlaybackIdentityIf discards the cached playback identity only
@@ -76,6 +90,7 @@ func (c *Client) dropPlaybackIdentityIf(p *DeviceProfile) {
 	defer c.playbackMu.Unlock()
 	if c.playbackProf == p {
 		c.playbackProf = nil
+		c.playbackRegAt = time.Time{}
 	}
 }
 

@@ -83,5 +83,18 @@ func (c *Client) ProbePlaybackChannels(ctx context.Context) map[string]bool {
 		}
 		c.logger.Printf("playback channel probe: %s", strings.Join(parts, " "))
 	}
+	// 齐射全灭不等于本地全灭（新身份试用期内必全灭），但也不能就此
+	// 算数：后台再跑一遍完整复核，确认全灭才给计算方式打上预切标
+	// 记。复核与恢复探测单飞共用，叠跑时自动跳过。
+	allDown := len(results) > 0
+	for _, alive := range results {
+		if alive {
+			allDown = false
+			break
+		}
+	}
+	if allDown && !inLocalConfirm(ctx) {
+		c.confirmLocalOrFlipAsync()
+	}
 	return results
 }
