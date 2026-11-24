@@ -114,6 +114,13 @@ var methods = map[string]method{
 		}
 		return c.NewReleases(ctx, q)
 	},
+	"upcoming": func(ctx context.Context, c *sdk.Client, a []json.RawMessage) (any, error) {
+		var cursor string
+		if err := arg(a, 0, &cursor); err != nil {
+			return nil, err
+		}
+		return c.Upcoming(ctx, cursor)
+	},
 	"getSeries": oneString(func(ctx context.Context, c *sdk.Client, id string) (any, error) { return c.GetSeries(ctx, id) }),
 	"getSeriesBatch": func(ctx context.Context, c *sdk.Client, a []json.RawMessage) (any, error) {
 		var ids []string
@@ -278,6 +285,13 @@ var methods = map[string]method{
 	},
 	"probePlaybackChannels": func(ctx context.Context, c *sdk.Client, a []json.RawMessage) (any, error) {
 		return c.ProbePlaybackChannels(ctx), nil
+	},
+	"probeSigningMode": func(ctx context.Context, c *sdk.Client, a []json.RawMessage) (any, error) {
+		var mode string
+		if err := arg(a, 0, &mode); err != nil {
+			return nil, err
+		}
+		return c.ProbeSigningMode(ctx, mode), nil
 	},
 	"resolvePlaybackBatch": func(ctx context.Context, c *sdk.Client, a []json.RawMessage) (any, error) {
 		var ids []string

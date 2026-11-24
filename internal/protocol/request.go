@@ -541,6 +541,30 @@ func SignedNewReleasePairs(id SearchIdentity, date string, cur ShortCursor) [][2
 	)
 }
 
+// SignedUpcomingPairs is the 预告榜 query: the same subscribe/list endpoint
+// as the calendar but tab_type/active_panel 2, which returns the long-range
+// announced list (weeks to months out, reserve counts, most with exact
+// publish timestamps). It takes no target_date. Verified live 2026-11-24:
+// 160+ items over 16 pages, still has_more.
+func SignedUpcomingPairs(id SearchIdentity, cur ShortCursor) [][2]string {
+	pairs := append(DeviceQueryPairs(id),
+		[2]string{"order_experiment", "descend"},
+		[2]string{"offset", strconv.Itoa(cur.Offset)},
+	)
+	return append(pairs,
+		[2]string{"active_panel", "2"},
+		[2]string{"session_id", cur.Session},
+		[2]string{"version", "0"},
+		[2]string{"gender_type", "2"},
+		[2]string{"tab_type", "2"},
+		[2]string{"filter_type", "gender"},
+		[2]string{"subscribe_list_opt", "0"},
+		[2]string{"tab_style", "2"},
+		[2]string{"need_calendar_schema", "true"},
+		[2]string{"user_is_login", "0"},
+	)
+}
+
 // SignedProfilePairs is the person-page query.
 func SignedProfilePairs(id SearchIdentity, userID string) [][2]string {
 	return append(DeviceQueryPairs(id),

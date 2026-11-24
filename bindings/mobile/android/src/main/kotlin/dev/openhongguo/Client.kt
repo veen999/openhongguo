@@ -35,6 +35,20 @@ data class PlaybackResult(
     val contentKeyError: OpenhongguoException? = null,
 )
 
+/** SigningModeProbe 是 probeSigningMode 的结果：一种计算方式的单次实测。 */
+data class SigningModeProbe(
+    /** 被测方式："local" / "unidbg" / "frida"。 */
+    val mode: String,
+    /** 是否成功取到播放模型。 */
+    val ok: Boolean,
+    /** 本次检测耗时（毫秒）。 */
+    val latencyMs: Long,
+    /** 成功时模型的最高画质，如 "1080P"；失败时为空。 */
+    val maxDefinition: String = "",
+    /** 失败类别：empty / timeout / unreachable / error；成功时为空。 */
+    val errorKind: String = "",
+)
+
 /** BatchPlaybackResult 是 resolvePlaybackBatch 的结果。 */
 data class BatchPlaybackResult(
     /** 成功解析的集，按 episodeId 索引。 */
@@ -146,6 +160,10 @@ class OpenhongguoClient internal constructor(private val engine: Engine) {
     suspend fun newReleases(query: NewReleaseQuery = NewReleaseQuery()): NewReleasePage =
         NewReleasePage.fromJson(call("newReleases", query.toJson()).asObject())
 
+    /** 预告榜的一页（远期已宣布作品，cursor 空为第一页）。 */
+    suspend fun upcoming(cursor: String = ""): NewReleasePage =
+        NewReleasePage.fromJson(call("upcoming", cursor).asObject())
+
     /** 一部剧的详情。 */
     suspend fun getSeries(seriesId: String): Series = Series.fromJson(call("getSeries", seriesId).asObject())
 
@@ -249,6 +267,18 @@ class OpenhongguoClient internal constructor(private val engine: Engine) {
             for (k in r.keys()) errors[k] = OpenhongguoException.fromJson(r.getJSONObject(k))
         }
         return BatchPlaybackResult(results, errors)
+    }
+
+    /** 检测一种计算方式当前是否可用：真实取址一次（不改变当前计算方式与自动切换状态），返回可用性、耗时（毫秒）、最高画质与失败类别。 */
+    suspend fun probeSigningMode(mode: String): SigningModeProbe {
+        val o = call("probeSigningMode", mode).asObject()
+        return SigningModeProbe(
+            mode = o.optString("mode", mode),
+            ok = o.optBoolean("ok"),
+            latencyMs = o.optLong("latencyMs"),
+            maxDefinition = o.optString("maxDefinition", ""),
+            errorKind = o.optString("errorKind", ""),
+        )
     }
 
     /** 启动健康探测：并发试一遍全部本地取址通道，结果记入 SDK 的通道健康表（活通道成为首选、死通道冷却），返回各通道当前是否可用。 */

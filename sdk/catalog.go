@@ -465,3 +465,42 @@ func (c *Client) NewReleases(ctx context.Context, q NewReleaseQuery) (*model.New
 		return &page, nil
 	})
 }
+
+// Upcoming 加载预告榜的一页：同一 subscribe/list 接口的 tab_type 2 面板，
+// 返回远期已宣布作品（数周至数月后上线），条目形状与上新日历相同
+// （Online 恒 false，Heat 是「N万人预约」，Note 是「预计X上线」文案，
+// PublishAt 多数有确切时刻、少数只有月份时为零值）。Cursor 是上一页的
+// Cursor（空即第一页）。匿名设备可读，2026-11-24 实测 160+ 条。
+func (c *Client) Upcoming(ctx context.Context, cursor string) (*model.NewReleasePage, error) {
+	return withFreshDevice(ctx, c, false, func(ctx context.Context) (*model.NewReleasePage, error) {
+		cur, err := protocol.DecodeShortCursor(cursor)
+		if err != nil {
+			return nil, err
+		}
+		p, err := c.ensureSearchGuest(ctx)
+		if err != nil {
+			return nil, err
+		}
+		ticket := c.clock().UnixMilli()
+		rawQuery, headers := sign.SignGET(protocol.SignedUpcomingPairs(c.identity(p), cur), ticket, p.DeviceID, protocol.VersionName, nil)
+		raw, _, err := c.doRaw(ctx, "GET", c.apiOrigin+protocol.PathSubscribeList+"?"+rawQuery, anonymousHeaders(c, p, ticket, headers), nil)
+		if err != nil {
+			return nil, err
+		}
+		res, err := protocol.ParseNewReleases(raw)
+		if err != nil {
+			return nil, err
+		}
+		page := res.NewReleasePage
+		if res.HasMore && len(res.Items) > 0 && res.NextOffset > cur.Offset {
+			next := protocol.ShortCursor{Offset: res.NextOffset, Session: res.SessionID}
+			if next.Session == "" {
+				next.Session = cur.Session
+			}
+			if page.Cursor, err = protocol.EncodeShortCursor(next); err != nil {
+				return nil, err
+			}
+		}
+		return &page, nil
+	})
+}
