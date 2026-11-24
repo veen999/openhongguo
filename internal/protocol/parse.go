@@ -1780,6 +1780,16 @@ func ParseSeasons(raw []byte) ([]model.Season, error) {
 				Cover string     `json:"cover"`
 				Count int        `json:"episode_cnt"`
 				Index int        `json:"season_index"`
+				// 未上线季的预告文案就挂在行自身的 sub_title_list 里
+				// （"预计12月19日上线" / "12.2万人预约"），subscribe_item 里有一份同文案。
+				SubTitleList []struct {
+					Content string `json:"content"`
+				} `json:"sub_title_list"`
+				SubscribeItem *struct {
+					SubTitleList []struct {
+						Content string `json:"content"`
+					} `json:"sub_title_list"`
+				} `json:"subscribe_item"`
 			} `json:"video_data"`
 		} `json:"data"`
 	}
@@ -1798,9 +1808,23 @@ func ParseSeasons(raw []byte) ([]model.Season, error) {
 			if r.ID.String() == "" {
 				continue
 			}
+			var onlineText, reserveText string
+			subs := r.SubTitleList
+			if len(subs) == 0 && r.SubscribeItem != nil {
+				subs = r.SubscribeItem.SubTitleList
+			}
+			for _, st := range subs {
+				switch {
+				case strings.Contains(st.Content, "上线"):
+					onlineText = st.Content
+				case strings.Contains(st.Content, "预约"):
+					reserveText = st.Content
+				}
+			}
 			out = append(out, model.Season{
 				SeriesID: r.ID.String(), Title: r.Title, Index: r.Index,
 				CoverURL: r.Cover, EpisodeCount: r.Count,
+				OnlineText: onlineText, ReserveText: reserveText,
 			})
 		}
 	}

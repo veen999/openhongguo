@@ -1564,6 +1564,11 @@ class Season {
   final String coverUrl;
   final int episodeCount;
   final SeriesStatus status;
+  /// OnlineText 是平台给未上线季的上线文案（如 "预计12月19日上线"），
+  /// 来自系列行 sub_title_list；已上线季为空。
+  final String onlineText;
+  /// ReserveText 是未上线季的预约文案（如 "12.2万人预约"）。
+  final String reserveText;
 
   const Season({
     this.seriesId = '',
@@ -1572,6 +1577,8 @@ class Season {
     this.coverUrl = '',
     this.episodeCount = 0,
     this.status = const SeriesStatus(0),
+    this.onlineText = '',
+    this.reserveText = '',
   });
 
   /// 从 Go SDK 输出的 JSON 解码；缺省的字段取零值。
@@ -1582,6 +1589,8 @@ class Season {
         coverUrl: _asString(j['cover_url']),
         episodeCount: _asInt(j['episode_count']),
         status: SeriesStatus(_asInt(j['status'])),
+        onlineText: _asString(j['online_text']),
+        reserveText: _asString(j['reserve_text']),
       );
 
   /// 编码成与 Go SDK 相同的 JSON。
@@ -1592,6 +1601,8 @@ class Season {
         'cover_url': coverUrl,
         'episode_count': episodeCount,
         'status': status.value,
+        'online_text': onlineText,
+        'reserve_text': reserveText,
       };
 }
 

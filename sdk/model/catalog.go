@@ -393,6 +393,11 @@ type Season struct {
 	CoverURL     string       `json:"cover_url,omitempty"`
 	EpisodeCount int          `json:"episode_count,omitempty"`
 	Status       SeriesStatus `json:"status,omitempty"`
+	// OnlineText 是平台给未上线季的上线文案（如 "预计12月19日上线"），
+	// 来自系列行 sub_title_list；已上线季为空。
+	OnlineText string `json:"online_text,omitempty"`
+	// ReserveText 是未上线季的预约文案（如 "12.2万人预约"）。
+	ReserveText string `json:"reserve_text,omitempty"`
 }
 
 // Album 是多季的合集，来自 /novel/player/album_detail/v1/。

@@ -1490,14 +1490,21 @@ public struct Season: Codable, Hashable, Sendable {
     public var coverUrl: String
     public var episodeCount: Int
     public var status: SeriesStatus
+    /// OnlineText 是平台给未上线季的上线文案（如 "预计12月19日上线"），
+    /// 来自系列行 sub_title_list；已上线季为空。
+    public var onlineText: String
+    /// ReserveText 是未上线季的预约文案（如 "12.2万人预约"）。
+    public var reserveText: String
 
-    public init(seriesId: String = "", title: String = "", index: Int = 0, coverUrl: String = "", episodeCount: Int = 0, status: SeriesStatus = SeriesStatus(rawValue: 0)) {
+    public init(seriesId: String = "", title: String = "", index: Int = 0, coverUrl: String = "", episodeCount: Int = 0, status: SeriesStatus = SeriesStatus(rawValue: 0), onlineText: String = "", reserveText: String = "") {
         self.seriesId = seriesId
         self.title = title
         self.index = index
         self.coverUrl = coverUrl
         self.episodeCount = episodeCount
         self.status = status
+        self.onlineText = onlineText
+        self.reserveText = reserveText
     }
 
     enum CodingKeys: String, CodingKey {
@@ -1507,6 +1514,8 @@ public struct Season: Codable, Hashable, Sendable {
         case coverUrl = "cover_url"
         case episodeCount = "episode_count"
         case status
+        case onlineText = "online_text"
+        case reserveText = "reserve_text"
     }
 
     public init(from decoder: Decoder) throws {
@@ -1517,6 +1526,8 @@ public struct Season: Codable, Hashable, Sendable {
         self.coverUrl = try c.decodeIfPresent(String.self, forKey: .coverUrl) ?? ""
         self.episodeCount = try c.decodeIfPresent(Int.self, forKey: .episodeCount) ?? 0
         self.status = try c.decodeIfPresent(SeriesStatus.self, forKey: .status) ?? SeriesStatus(rawValue: 0)
+        self.onlineText = try c.decodeIfPresent(String.self, forKey: .onlineText) ?? ""
+        self.reserveText = try c.decodeIfPresent(String.self, forKey: .reserveText) ?? ""
     }
 }
 

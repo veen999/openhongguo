@@ -1345,6 +1345,13 @@ data class Season(
     val coverUrl: String = "",
     val episodeCount: Int = 0,
     val status: SeriesStatus = SeriesStatus(0),
+    /**
+     * OnlineText 是平台给未上线季的上线文案（如 "预计12月19日上线"），
+     * 来自系列行 sub_title_list；已上线季为空。
+     */
+    val onlineText: String = "",
+    /** ReserveText 是未上线季的预约文案（如 "12.2万人预约"）。 */
+    val reserveText: String = "",
 ) {
     /** 编码成与 Go SDK 相同的 JSON。 */
     fun toJson(): JSONObject = JSONObject().apply {
@@ -1354,6 +1361,8 @@ data class Season(
         put("cover_url", coverUrl)
         put("episode_count", episodeCount)
         put("status", status.value)
+        put("online_text", onlineText)
+        put("reserve_text", reserveText)
     }
 
     companion object {
@@ -1365,6 +1374,8 @@ data class Season(
             coverUrl = o.opt("cover_url").asString(),
             episodeCount = o.opt("episode_count").asInt(),
             status = SeriesStatus(o.opt("status").asInt()),
+            onlineText = o.opt("online_text").asString(),
+            reserveText = o.opt("reserve_text").asString(),
         )
     }
 }
