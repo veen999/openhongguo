@@ -56,6 +56,12 @@ func (c *Client) SetSigningMode(mode string) {
 	c.signMode.Store(next)
 	c.effSignMode.Store(next)
 	c.localFailCount.Store(0)
+	if next == SigningModeLocal {
+		// 用户刚改选本地：旧判定作废，后台立即复核出新判定——播放
+		// 时直接按判定走，不在播放路径上现测。
+		c.localVerdict.Store(localVerdictUnknown)
+		c.confirmLocalOrFlipAsync()
+	}
 }
 
 func (c *Client) signingMode() int32 { return c.signMode.Load() }
@@ -97,21 +103,73 @@ func (c *Client) SetSigningModeAuto(mode string) {
 	c.effSignMode.Store(next)
 }
 
-// noteLocalFailure 处理一次本地全链取址失败，决定要不要切到远程
-// 计算-unidbg。用户规则（2026-11-23 定版，取代 2026-11-20 案二的
-// 「失败 1 次即切」）：先探测完本地多个通道是否可用，都不可用再换
-// 远程——全链失败一次不等于本地全灭（新播放身份在平台试用期内会
-// 整片空返、通道也会逐个开关），必须经多通道复核确认。复核发现任
-// 一本地通道可用 → 返回 false（不切，调用方按本地再跑一遍全链）；
-// 全部确认不可用 → 把实际生效方式切到 unidbg 并返回 true，调用方
-// 用新方式重试本次取址。
-func (c *Client) noteLocalFailure(ctx context.Context, episodeID string) bool {
-	if c.localChannelsAlive(ctx, episodeID) {
-		return false
+// 本地可用性判定缓存（2026-11-25 播放时检测重设计，取代旧的播放
+// 路径内联复核）：判定只由后台流程与真实取址结果维护——启动齐射
+// 探测、后台完整复核（confirmLocalOrFlipAsync，含试用期复探）、远
+// 程期间的恢复探测、设置弹层的链路级检测、以及播放本身的成败。
+// 播放路径只读判定：判定「不可用」且未过期 → 本次直接走 unidbg，
+// 本地零等待；判定「可用」→ 本地全链；判定未知 → 本地限时一试，
+// 失败立即用 unidbg 顶上并触发后台复核，绝不在播放路径上等复核。
+// 用户规则（2026-11-23）「先探测完本地多个通道、都不可用再换远程」
+// 不变，只是复核搬到后台：只有完整复核（或链路级检测）能下「确认
+// 不可用」判定（有效期 180 秒）；播放单次失败只记 45 秒的临时判
+// 定，等后台复核覆盖。
+const (
+	localVerdictUnknown = 0
+	localVerdictAlive   = 1
+	localVerdictDown    = 2
+)
+
+const (
+	localVerdictTTL          = 180 * time.Second
+	localProvisionalDownTTL  = 45 * time.Second
+	localPlayAttemptTimeout  = 20 * time.Second
+)
+
+// localVerdictFresh 返回当前判定与它是否仍在有效期内。
+func (c *Client) localVerdictFresh() (int32, bool) {
+	v := c.localVerdict.Load()
+	if v == localVerdictUnknown {
+		return v, false
 	}
-	c.localFailCount.Store(0)
-	c.effSignMode.Store(SigningModeUnidbg)
-	return true
+	at := c.localVerdictAtMs.Load()
+	ttl := c.localVerdictTTLMs.Load()
+	if at == 0 || ttl == 0 {
+		return v, false
+	}
+	return v, c.clock().UnixMilli()-at <= ttl
+}
+
+// recordLocalVerdict 记录一次确认判定并同步生效方式：锚点是本地
+// 时，可用 → 生效本地，不可用 → 生效 unidbg。锚点不是本地时只记
+// 判定，不动生效方式（生效方式跟随用户选择）。
+func (c *Client) recordLocalVerdict(alive bool) {
+	if alive {
+		c.localVerdict.Store(localVerdictAlive)
+	} else {
+		c.localVerdict.Store(localVerdictDown)
+		c.localFailCount.Store(0)
+	}
+	c.localVerdictAtMs.Store(c.clock().UnixMilli())
+	c.localVerdictTTLMs.Store(localVerdictTTL.Milliseconds())
+	if c.signingMode() == SigningModeLocal {
+		if alive {
+			c.effSignMode.Store(SigningModeLocal)
+		} else {
+			c.effSignMode.Store(SigningModeUnidbg)
+		}
+	}
+}
+
+// recordLocalProvisionalDown 记录播放单次失败的临时判定：短有效期
+// 内后续播放直接走远程，后台完整复核随后给出确认判定覆盖它。
+func (c *Client) recordLocalProvisionalDown() {
+	c.localVerdict.Store(localVerdictDown)
+	c.localVerdictAtMs.Store(c.clock().UnixMilli())
+	c.localVerdictTTLMs.Store(localProvisionalDownTTL.Milliseconds())
+	if c.signingMode() == SigningModeLocal {
+		c.effSignMode.Store(SigningModeUnidbg)
+	}
 }
 
 type localConfirmKey struct{}
@@ -215,37 +273,87 @@ func (c *Client) localChannelsAlive(ctx context.Context, episodeID string) bool 
 	return false
 }
 
-// confirmLocalOrFlipAsync 后台完整复核本地通道（与切换判定同一口
-// 径）：任一通道可用则什么都不做；全部确认不可用且锚点与当前生效
-// 方式都是本地时，把生效方式预切到 unidbg——启动探测全灭时由它给
-// 计算方式打上标记，免得第一集播放现场再付一遍全链失败加复核的
-// 耗时。单飞（与 probeLocalAsync 共用运行标记），避免启动复核、
-// 恢复探测与失败复核叠跑。
-func (c *Client) confirmLocalOrFlipAsync() {
+// launchLocalProbe 是后台本地探测的统一入口（单飞 + 排队重跑）：
+// confirm=true 跑完整复核并记录确认判定；confirm=false 是远程期间
+// 的恢复探测，只在探到可用时记录「可用」判定。探测在跑时新到的请
+// 求不丢弃——置排队标记，当前探测结束后按确认口径再跑一遍（旧实
+// 现直接吞掉后到的请求，本地恢复了也切不回来）。
+func (c *Client) launchLocalProbe(episodeID string, confirm bool) {
 	if !c.localProbeRunning.CompareAndSwap(false, true) {
+		// 已有探测在跑：按种类排队，当前探测结束后补跑——确认与
+		// 恢复口径不同（探针集不同、恢复带真实剧集），不可顶替。
+		if confirm {
+			c.localProbeAgainConfirm.Store(true)
+		} else {
+			c.localProbeAgainEpisode.Store(episodeID)
+			c.localProbeAgain.Store(true)
+		}
 		return
 	}
 	go func() {
-		defer c.localProbeRunning.Store(false)
-		if c.signingMode() != SigningModeLocal || c.effectiveSigningMode() != SigningModeLocal {
+		defer func() {
+			c.localProbeRunning.Store(false)
+			if c.localProbeAgainConfirm.Load() {
+				c.launchLocalProbe(probeEpisodeID, true)
+			} else if c.localProbeAgain.Load() {
+				ep, _ := c.localProbeAgainEpisode.Load().(string)
+				c.launchLocalProbe(ep, false)
+			}
+		}()
+		jobConfirm, jobEpisode := confirm, episodeID
+		for {
+			if c.signingMode() == SigningModeLocal {
+				if jobConfirm {
+					ctx, cancel := context.WithTimeout(context.Background(), 150*time.Second)
+					ctx = withResignBypass(ctx)
+					c.recordLocalVerdict(c.localChannelsAlive(ctx, probeEpisodeID))
+					cancel()
+				} else {
+					ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+					// 探活测的是本地签名：绕过传输层重签，否则远程
+					// 签名会把探活请求也签成远程的，本地没恢复也会
+					// 误判为已恢复。
+					ctx = withResignBypass(ctx)
+					if c.localChannelsAlive(ctx, jobEpisode) {
+						c.recordLocalVerdict(true)
+						c.localFailCount.Store(0)
+					}
+					cancel()
+				}
+			}
+			// 排队请求补跑：恢复优先（能直接记可用判定），其次确认。
+			if c.localProbeAgain.Load() {
+				c.localProbeAgain.Store(false)
+				jobConfirm = false
+				jobEpisode, _ = c.localProbeAgainEpisode.Load().(string)
+				continue
+			}
+			if c.localProbeAgainConfirm.Load() {
+				c.localProbeAgainConfirm.Store(false)
+				jobConfirm = true
+				continue
+			}
 			return
-		}
-		ctx, cancel := context.WithTimeout(context.Background(), 150*time.Second)
-		defer cancel()
-		ctx = withResignBypass(ctx)
-		if !c.localChannelsAlive(ctx, probeEpisodeID) {
-			c.localFailCount.Store(0)
-			c.effSignMode.Store(SigningModeUnidbg)
 		}
 	}()
 }
 
-// noteResolveSuccess 处理一次取址成功后的策略动作：本地成功清零失败
-// 计数；远程成功则后台探测本地是否已恢复，恢复则切回本地（下一次
-// 取址生效）。
+// confirmLocalOrFlipAsync 后台完整复核本地通道并记录确认判定
+// （recordLocalVerdict，有效期 180 秒，生效方式随之同步）：启动探
+// 测全灭、用户改选本地、播放本地失败时触发。复核口径与切换判定
+// 一致（多通道 + 试用期同身份复探 + 新鲜身份复核），但只在后台
+// 跑——播放路径不等它。
+func (c *Client) confirmLocalOrFlipAsync() {
+	c.launchLocalProbe(probeEpisodeID, true)
+}
+
+// noteResolveSuccess 处理一次取址成功后的策略动作：本地成功记
+// 「可用」判定并清零失败计数；远程成功则后台探测本地是否已恢复，
+// 恢复则切回本地（下一次取址生效）。
 func (c *Client) noteResolveSuccess(mode int32, episodeID string) {
 	if mode == SigningModeLocal {
 		c.localFailCount.Store(0)
+		c.recordLocalVerdict(true)
 		return
 	}
 	c.probeLocalAsync(episodeID)
@@ -257,21 +365,7 @@ func (c *Client) noteResolveSuccess(mode int32, episodeID string) {
 // 来）。只探不取，结果不用于本次播放；单飞运行；探测走内存播放
 // 身份，不触碰目录游客身份，失败不影响任何正在使用的身份。
 func (c *Client) probeLocalAsync(episodeID string) {
-	if !c.localProbeRunning.CompareAndSwap(false, true) {
-		return
-	}
-	go func() {
-		defer c.localProbeRunning.Store(false)
-		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-		defer cancel()
-		// 探活测的是本地签名：绕过传输层重签，否则远程签名会把探活
-		// 请求也签成远程的，本地没恢复也会误判为已恢复。
-		ctx = withResignBypass(ctx)
-		if c.localChannelsAlive(ctx, episodeID) {
-			c.effSignMode.Store(SigningModeLocal)
-			c.localFailCount.Store(0)
-		}
-	}()
+	c.launchLocalProbe(episodeID, false)
 }
 
 // resolvePlaybackViaRemote 按用户所选计算方式走远程签名取址；本地方式或

@@ -1,9 +1,11 @@
 package sdk
 
-// 算法策略层测试（镜像 hongguoTV PlaybackAlgorithmPolicy 的语义）：
-// 本地全链取址失败后先多通道复核本地通道，全部确认不可用才自动切
-// 到 unidbg 并重试本次（2026-11-23 规则）；远程成功后后台多通道复
-// 探本地，任一通道恢复则切回本地；重复下发同一用户选择不重置策略。
+// 算法策略层测试：本地可用性判定缓存（2026-11-25 重设计）——播放
+// 路径只读判定，本地失败立即用 unidbg 顶上本次并记 45 秒临时判定，
+// 多通道完整复核只在后台跑、确认不可用才记 180 秒确认判定（用户
+// 2026-11-23 规则「先探测完多个通道再换远程」的复核搬到后台）；
+// 远程成功后后台多通道复探本地，任一通道恢复则切回本地；重复下发
+// 同一用户选择不重置策略。
 
 import (
 	"context"
@@ -195,10 +197,11 @@ func TestSetSigningModeAutoKeepsAnchorAndProbe(t *testing.T) {
 	}
 }
 
-func TestPolicyProbationReprobeRecovers(t *testing.T) {
-	// 试用期场景：本地通道在身份养到一定年龄后恢复。复核不得在第
-	// 一轮全灭时就切远程，必须在同一身份上间隔复探、等到恢复，并
-	// 以本地方式完成本次取址。
+func TestPolicyProbationRecoversViaBackgroundConfirm(t *testing.T) {
+	// 试用期场景：本地通道在身份养到一定年龄后恢复。新设计下播放
+	// 路径不等试用期：本次先用 unidbg 顶上（不出现失败），后台完
+	// 整复核在同一身份上间隔复探、等到恢复后记「可用」判定并把生
+	// 效方式切回本地，后续播放直接走本地。
 	oldT, oldI := probationTargetAge, probationReprobeInterval
 	probationTargetAge = 4 * time.Second
 	probationReprobeInterval = 1 * time.Second
@@ -223,11 +226,21 @@ func TestPolicyProbationReprobeRecovers(t *testing.T) {
 	c.SetSigningMode("local")
 	pb, err := c.ResolvePlayback(context.Background(), policyEpisodeID, PlaybackOptions{})
 	if pb == nil {
-		t.Fatalf("probation resolve should recover locally, err = %v", err)
+		t.Fatalf("probation resolve should succeed via unidbg fallback, err = %v", err)
 	}
-	if got := c.EffectiveSigningMode(); got != "local" {
-		t.Fatalf("effective = %q, want local (probation recovery must not flip)", got)
+	if got := c.signingMode(); got != SigningModeLocal {
+		t.Fatalf("anchor changed: %d", got)
 	}
+	deadline := time.Now().Add(6 * time.Second)
+	for time.Now().Before(deadline) {
+		if c.EffectiveSigningMode() == "local" {
+			if v, fresh := c.localVerdictFresh(); fresh && v == localVerdictAlive {
+				return
+			}
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	t.Fatalf("effective = %q, want local after background probation recovery", c.EffectiveSigningMode())
 }
 
 func TestStartupProbePreFlipsWhenConfirmedDown(t *testing.T) {

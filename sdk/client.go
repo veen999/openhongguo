@@ -74,8 +74,26 @@ type Client struct {
 	effSignMode atomic.Int32
 	// localFailCount 是本地方式连续取址失败计数，本地成功即清零。
 	localFailCount atomic.Int32
+	// localVerdict 是本地可用性的判定缓存（见 remote_sign.go 的
+	// localVerdict*）：0 未知 / 1 可用 / 2 不可用，由后台复核与真实
+	// 取址结果维护，播放路径只读它决定要不要先试本地——不在播放
+	// 路径上内联做多通道复核（旧实现死时段要等一分多钟）。
+	localVerdict atomic.Int32
+	// localVerdictAtMs / localVerdictTTLMs 是判定的记录时刻与有效期
+	// （毫秒，c.clock() 口径）：确认判定 180 秒，播放失败的临时判
+	// 定 45 秒（等后台复核给出确认判定后覆盖）。
+	localVerdictAtMs  atomic.Int64
+	localVerdictTTLMs atomic.Int64
 	// localProbeRunning 保证本地恢复探测同时只跑一个。
 	localProbeRunning atomic.Bool
+	// localProbeAgain 是探测排队标记：已有探测在跑时新到的探测请
+	// 求置位它，当前探测结束后必须再跑一遍——否则后到的一次恢复
+	// 探测会被单飞吞掉，本地恢复了也切不回来。确认与恢复两种请求
+	// 分开排队（各自带自己的探针集/剧集，复核口径不同，不可互相
+	// 顶替）；localProbeAgainEpisode 存恢复探测排队的剧集。
+	localProbeAgain        atomic.Bool
+	localProbeAgainConfirm atomic.Bool
+	localProbeAgainEpisode atomic.Value // string
 	// fridaMu 保护远程计算-frida 的设备档案缓存：身份由服务提供，
 	// 拉取一次缓存 60 秒（与服务方客户端的节奏一致）。
 	fridaMu      sync.Mutex

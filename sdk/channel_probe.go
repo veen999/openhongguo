@@ -93,7 +93,10 @@ func (c *Client) ProbePlaybackChannels(ctx context.Context) map[string]bool {
 			break
 		}
 	}
-	if allDown && !inLocalConfirm(ctx) {
+	if !allDown {
+		// 任一通道在发放即本地可用：记确认判定，播放直接走本地。
+		c.recordLocalVerdict(true)
+	} else if !inLocalConfirm(ctx) {
 		c.confirmLocalOrFlipAsync()
 	}
 	return results

@@ -44,31 +44,61 @@ type PlaybackOptions struct{}
 // 模型携带的是包装后的密钥材料（Playback.KeyMaterial），从不包含内容密钥本身、
 // 分片校验数据或解密后的媒体。
 func (c *Client) ResolvePlayback(ctx context.Context, episodeID string, _ PlaybackOptions) (*model.Playback, error) {
-	mode := c.effectiveSigningMode()
-	playback, err := c.resolvePlaybackChain(ctx, episodeID, mode)
-	if playback != nil {
-		c.noteResolveSuccess(mode, episodeID)
+	// 锚点不是本地（用户选了远程）：按生效方式直跑全链，无策略层。
+	if c.signingMode() != SigningModeLocal {
+		mode := c.effectiveSigningMode()
+		playback, err := c.resolvePlaybackChain(ctx, episodeID, mode)
+		if playback != nil {
+			c.noteResolveSuccess(mode, episodeID)
+		}
 		return playback, err
 	}
-	// 算法策略层：用户选的是本地、本次也是按本地取的，全链失败后先按
-	// 多通道复核本地是否真的全不可用（noteLocalFailure），确认全不可
-	// 用才切远程计算-unidbg 并用新方式重试本次取址（播放不出现失败
-	// 界面）；复核发现本地仍有通道可用则按本地再跑一遍全链。远程方
-	// 式成功后的本地恢复探测见 noteResolveSuccess。
-	if c.signingMode() == SigningModeLocal && mode == SigningModeLocal {
-		if !c.noteLocalFailure(ctx, episodeID) {
-			if playback, err := c.resolvePlaybackChain(ctx, episodeID, SigningModeLocal); playback != nil {
-				c.noteResolveSuccess(SigningModeLocal, episodeID)
-				return playback, err
-			}
-			c.effSignMode.Store(SigningModeUnidbg)
-		}
-		if playback, err := c.resolvePlaybackChain(ctx, episodeID, SigningModeUnidbg); playback != nil {
+	// 锚点本地 + 判定「确认不可用」未过期：本地零等待，本次直接走
+	// unidbg（生效方式已由 recordLocalVerdict 同步为 unidbg，传输层
+	// 据此重签）。unidbg 也失败时判定可能已失真，限时补试本地一遍。
+	if verdict, fresh := c.localVerdictFresh(); fresh && verdict == localVerdictDown {
+		playback, err := c.resolvePlaybackChain(ctx, episodeID, SigningModeUnidbg)
+		if playback != nil {
 			c.noteResolveSuccess(SigningModeUnidbg, episodeID)
 			return playback, err
-		} else if err != nil {
-			return nil, err
 		}
+		boxCtx, cancel := context.WithTimeout(ctx, localPlayAttemptTimeout)
+		playback, err = c.resolvePlaybackChain(boxCtx, episodeID, SigningModeLocal)
+		cancel()
+		if playback != nil {
+			c.noteResolveSuccess(SigningModeLocal, episodeID)
+		}
+		return playback, err
+	}
+	// 判定「可用」：本地全链（不限时，可用判定下通道应快速发放）。
+	// 判定未知/过期：本地限时一试——死时段全链长尾被 20 秒封顶，
+	// 试用期等慢恢复不在播放路径上等，交给后台复核养判定。
+	verdict, fresh := c.localVerdictFresh()
+	playCtx := ctx
+	var cancel context.CancelFunc
+	if !fresh || verdict != localVerdictAlive {
+		playCtx, cancel = context.WithTimeout(ctx, localPlayAttemptTimeout)
+	}
+	playback, err := c.resolvePlaybackChain(playCtx, episodeID, SigningModeLocal)
+	if cancel != nil {
+		cancel()
+	}
+	if playback != nil {
+		c.noteResolveSuccess(SigningModeLocal, episodeID)
+		return playback, err
+	}
+	// 本地这次没拿到：不在播放路径上做多通道复核（旧实现内联复核，
+	// 死时段转圈一分多钟还不切远程）。记 45 秒临时判定 + 触发后台
+	// 完整复核（确认判定随后覆盖），本次立即切 unidbg 顶上（播放不
+	// 出现失败界面）；远程成功后的本地恢复探测见 noteResolveSuccess。
+	c.recordLocalProvisionalDown()
+	c.confirmLocalOrFlipAsync()
+	playback, err = c.resolvePlaybackChain(ctx, episodeID, SigningModeUnidbg)
+	if playback != nil {
+		c.noteResolveSuccess(SigningModeUnidbg, episodeID)
+		return playback, err
+	} else if err != nil {
+		return nil, err
 	}
 	return playback, err
 }

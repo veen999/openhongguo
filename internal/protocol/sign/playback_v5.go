@@ -112,14 +112,13 @@ func playbackV5Hash(query [32]byte, body [16]byte, ts uint32) []byte {
 func (s *PlaybackV5Signer) medusa(query string, queryHash [32]byte, bodyMD5 [16]byte, ts uint32, entropy Entropy) string {
 	deviceID := queryValue(query, "device_id")
 	version := queryValue(query, "version_name")
-	device := concat(
-		protoSInt(1, 1), protoSInt(2, 2), protoString(3, appID), protoString(4, deviceID),
-		protoString(5, s.nonce), protoString(6, "!noperm!"), protoString(7, "!notset!"), protoString(12, "Asia/Shanghai,8"),
-		protoString(13, "zh_CN"), protoString(22, queryValue(query, "os_version")), protoSInt(25, s.started),
-		protoString(30, queryValue(query, "device_type")), protoString(31, "HONOR"),
-		protoString(32, queryValue(query, "device_type")), protoString(34, "HONOR"),
-	)
-	env := concat(protoString(6, "v04.06.04.03-bugfix"), protoString(8, queryValue(query, "channel")), protoBytes(12, device), protoString(14, version))
+	brand := queryValue(query, "device_brand")
+	if brand == "" {
+		brand = "HONOR"
+	}
+	nowMillis := int64(ts)*1000 + int64(entropy.MessageRandom%1000)
+	device := medusaDeviceBlock(deviceID, s.nonce, queryValue(query, "device_type"), brand, queryValue(query, "os_version"), s.started, nowMillis)
+	env := medusaEnvDevice(ts, "v04.06.04.03-bugfix", queryValue(query, "channel"), device, version, s.started)
 	digest := playbackV5Hash(queryHash, bodyMD5, ts)
 	flags := make([]byte, 8)
 	message := concat(
@@ -127,7 +126,7 @@ func (s *PlaybackV5Signer) medusa(query string, queryHash [32]byte, bodyMD5 [16]
 		protoString(4, appID), protoString(5, deviceID), protoString(6, playbackV5License),
 		protoString(7, version), protoString(8, "v04.06.04-ml-android"), protoSInt(9, 0x04060400),
 		protoBytes(10, flags), protoSInt(12, int64(ts)), protoBytes(13, digest), protoBytes(14, queryHash[:6]),
-		protoBytes(15, concat(protoSInt(1, 1), protoSInt(2, 1), protoSInt(3, 1), protoSInt(5, 1))),
+		protoBytes(15, concat(protoSInt(1, nextMedusaCount()), protoSInt(2, 1), protoSInt(3, 1), protoSInt(5, 1))),
 		protoSInt(17, int64(ts)), protoString(20, "none"), protoSInt(21, 369), protoBytes(23, env),
 		protoString(24, "{\"cmr\":16777216,\"cmr2\":16777216,\"un_h\":1879194040,\"vpn\":0,\"kd\":0,\"fkd\":3672518972,\"pd\":-1872573247,\"dyn\":\"\",\"do\":0,\"tk\":true}"),
 	)

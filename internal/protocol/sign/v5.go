@@ -166,32 +166,12 @@ func assembleHeliosV5(khronos, random uint32) string {
 	return base64.StdEncoding.EncodeToString(result)
 }
 
-func deviceProtoV5(id V5Identity) []byte {
-	var out []byte
-	out = append(out, protoSInt(1, 1)...)
-	out = append(out, protoSInt(2, 2)...)
-	out = append(out, protoString(3, appID)...)
-	out = append(out, protoString(4, id.DeviceID)...)
-	out = append(out, protoString(5, MedusaNonce)...)
-	out = append(out, protoString(6, "!noperm!")...)
-	out = append(out, protoString(12, "Asia/Shanghai,8")...)
-	out = append(out, protoString(13, "zh_CN")...)
-	out = append(out, protoString(22, id.OSVersion)...)
-	out = append(out, protoSInt(25, MedusaDeviceStartedMS)...)
-	out = append(out, protoString(30, id.DeviceType)...)
-	out = append(out, protoString(31, "HONOR")...)
-	out = append(out, protoString(32, id.DeviceType)...)
-	out = append(out, protoString(34, "HONOR")...)
-	return out
+func deviceProtoV5(id V5Identity, nowMillis int64) []byte {
+	return medusaDeviceBlock(id.DeviceID, MedusaNonce, id.DeviceType, "HONOR", id.OSVersion, MedusaDeviceStartedMS, nowMillis)
 }
 
-func envV5(id V5Identity) []byte {
-	var out []byte
-	out = append(out, protoString(6, "v04.10.03.04-bugfix")...)
-	out = append(out, protoString(8, id.Channel)...)
-	out = append(out, protoBytes(12, deviceProtoV5(id))...)
-	out = append(out, protoString(14, id.VersionName)...)
-	return out
+func envV5(id V5Identity, khronos uint32, nowMillis int64) []byte {
+	return medusaEnvDevice(khronos, "v04.10.03.04-bugfix", id.Channel, deviceProtoV5(id, nowMillis), id.VersionName, MedusaDeviceStartedMS)
 }
 
 // assembleMedusaV5 builds the v04.10.03 medusa envelope: the v5
@@ -205,11 +185,22 @@ func assembleMedusaV5(query string, body []byte, khronos uint32, id V5Identity, 
 		bodyMD5 = s[:]
 	}
 	f13 := hashF13V5(querySM3[:], bodyMD5, khronos)
+	nowMillis := int64(khronos)*1000 + int64(ent.MessageRandom%1000)
 	flags := make([]byte, 8)
+	if id.DeviceType != "" {
+		flags = medusaDeviceFlags
+	}
 
-	nested := append(protoSInt(1, 1), protoSInt(2, 1)...)
-	nested = append(nested, protoSInt(3, 1)...)
-	nested = append(nested, protoSInt(5, 1)...)
+	var nested []byte
+	if id.DeviceType != "" {
+		nested = append(protoSInt(1, nextMedusaCount()), protoSInt(2, 5)...)
+		nested = append(nested, protoSInt(3, medusaUnsetCtr)...)
+		nested = append(nested, protoSInt(5, medusaUnsetCtr)...)
+	} else {
+		nested = append(protoSInt(1, 1), protoSInt(2, 1)...)
+		nested = append(nested, protoSInt(3, 1)...)
+		nested = append(nested, protoSInt(5, 1)...)
+	}
 
 	message := protoBytes(1, v5Magic)
 	message = append(message, protoSInt(2, 5)...)
@@ -228,7 +219,7 @@ func assembleMedusaV5(query string, body []byte, khronos uint32, id V5Identity, 
 	message = append(message, protoSInt(17, int64(khronos))...)
 	message = append(message, protoString(20, "none")...)
 	message = append(message, protoSInt(21, 369)...)
-	message = append(message, protoBytes(23, envV5(id))...)
+	message = append(message, protoBytes(23, envV5(id, khronos, nowMillis))...)
 	message = append(message, protoString(24, `{"cmr":16777216,"cmr2":16777216,"un_h":11,"vpn":0,"kd":0,"dyn":"","do":1,"tk":true}`)...)
 
 	hash, seed := keyHash(v5SignKey, ent.Random)
