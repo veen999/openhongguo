@@ -25,8 +25,9 @@ const channelDownDuration = 45 * time.Second
 // 解析的 v5 POST，与单集 v5 同端点但独立记账（批量退化与单集链的
 // 健康互不牵连）。
 const (
-	channelV5       = "v5"
-	channelPlayerV1 = "playerv1"
+	channelVideoModelV5 = "videomodelv5"
+	channelV5           = "v5"
+	channelPlayerV1     = "playerv1"
 	channelTabMulti = "tabmulti"
 	channelPlayer   = "player"
 	channelMultiV2  = "multiv2"
@@ -38,7 +39,7 @@ const (
 // resolveChannelOrder 是单集取址链里通道的经典顺序（健康计划的基准
 // 序与全 down 时的回退序）。
 var resolveChannelOrder = []string{
-	channelV5, channelPlayerV1, channelTabMulti, channelPlayer, channelMultiV2, channelMulti, channelTab,
+	channelVideoModelV5, channelV5, channelPlayerV1, channelTabMulti, channelPlayer, channelMultiV2, channelMulti, channelTab,
 }
 
 type channelState struct {

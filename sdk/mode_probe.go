@@ -66,7 +66,10 @@ func (c *Client) ProbeSigningMode(ctx context.Context, mode string) SigningModeP
 		var p *DeviceProfile
 		p, err = c.playbackIdentity(bypassCtx)
 		if err == nil {
-			if m, _ := c.resolvePlaybackViaTabMulti(bypassCtx, p, probeEpisodeID); m != nil {
+			if m, _ := c.resolvePlaybackViaVideoModelV5(bypassCtx, p, probeEpisodeID); m != nil {
+				c.noteChannelOutcome(bypassCtx, channelVideoModelV5, m, nil)
+				pb = m
+			} else if m, _ := c.resolvePlaybackViaTabMulti(bypassCtx, p, probeEpisodeID); m != nil {
 				c.noteChannelOutcome(bypassCtx, channelTabMulti, m, nil)
 				pb = m
 			} else if m, _ := c.resolvePlaybackViaMobileV5(bypassCtx, p, probeEpisodeID); m != nil {

@@ -138,3 +138,54 @@ func PlaybackV5Body(episodeID string) ([]byte, error) {
 		"mixed_video_id_map": map[string][]string{"1004": {episodeID}},
 	})
 }
+
+// ---- 稀疏变体（video_model/v1 直打，hongguoTV PlaybackV5Signer 形状） ----
+
+// PlaybackV5SparseUserAgent 是稀疏变体通道的固定 UA：画像版本写
+// 73932、机型与查询模板一致（25053RT47C / Android 16），与查询串里
+// 的 74532 画像不一致是该实现原样，不要对齐。
+const PlaybackV5SparseUserAgent = "com.phoenix.read/73932 (Linux; U; Android 16; zh_CN; 25053RT47C; Build/BP2A.250605.031.A3; Cronet/TTNetVersion:04657795 2026-01-23 QuicVersion:c67e9834 2025-09-08)"
+
+// PlaybackV5SparsePairs 是稀疏变体的查询模板（74532 画像，顺序即
+// 线序）：机型/品牌/系统/渠道是固定模板值，只有 iid / device_id /
+// cdid 来自客户端身份。签名器在其后追加 _rticket；本模板不带 ts。
+func PlaybackV5SparsePairs(deviceID, installID, cdid string) [][2]string {
+	return [][2]string{
+		{"aid", AID},
+		{"app_name", AppName},
+		{"version_code", PlaybackV041003VersionCode},
+		{"version_name", PlaybackV041003VersionName},
+		{"update_version_code", PlaybackV041003VersionCode},
+		{"manifest_version_code", PlaybackV041003VersionCode},
+		{"os", "android"},
+		{"ssmix", "a"},
+		{"channel", "update_64"},
+		{"device_platform", DevicePlatform},
+		{"device_type", "25053RT47C"},
+		{"device_brand", "Redmi"},
+		{"os_version", "16"},
+		{"os_api", "36"},
+		{"ac", "wifi"},
+		{"language", "zh"},
+		{"host_abi", "arm64-v8a"},
+		{"iid", installID},
+		{"device_id", deviceID},
+		{"cdid", cdid},
+	}
+}
+
+// PlaybackVideoModelBody 是 video_model/v1 直打的明文 JSON body：
+// biz_param 只带取全档必需字段 + content_type/video_id。调用方
+// gzip 后把同一份字节同时用于签名和发送。2026-11-25 实测：扁平
+// 体（无 biz_param）只回单档 720p，本形状回全 5 档。
+func PlaybackVideoModelBody(episodeID string) ([]byte, error) {
+	return jsonMarshal(map[string]any{
+		"biz_param": map[string]any{
+			"need_all_video_definition": true,
+			"use_os_player":               false,
+			"video_platform":              1024,
+		},
+		"content_type": 1,
+		"video_id":     episodeID,
+	})
+}

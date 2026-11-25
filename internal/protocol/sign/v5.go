@@ -403,3 +403,164 @@ func (a aesV3) encryptV5(data, iv []byte) []byte {
 	}
 	return append([]byte{keyStream[31]}, out...)
 }
+
+// ---- v04.10.03 sparse variant (hongguoTV PlaybackV5Signer shape) ----
+//
+// The same v04.10.03 envelope lineage as assembleMedusaV5, but with
+// the field pairing the 7.4.5.32 query profile actually ships with:
+// medusa field 21 = 312 (the dense signer's 369 pairs with the older
+// 7.3.9.32 profile; mixing them answers 200 + empty body), flags
+// always eight zero bytes, field-15 counters fixed at {1,1,1,1}, and
+// the SPARSE device block — process nonce + process start time, no
+// -888888 sentinels, no storage/memory floats, no install stamps —
+// inside a minimal {6,8,12,14} env. Live-verified 2026-11-25 from a
+// datacenter egress: POST /novel/player/video_model/v1/ with this
+// signer and the 20-pair query (PlaybackV5SparsePairs) returns
+// code=0 with the full 5-tier ladder, where every dense-variant
+// channel answers empty.
+
+// V5SparseIdentity is the device identity the sparse medusa embeds.
+// DeviceType/DeviceBrand feed both the query pairs and the device
+// block; they are the fixed playback template values, independent of
+// the registered profile that supplied DeviceID/InstallID/CDID.
+type V5SparseIdentity struct {
+	DeviceID    string
+	VersionName string
+	Channel     string
+	OSVersion   string
+	DeviceType  string
+	DeviceBrand string
+}
+
+func deviceProtoV5Sparse(id V5SparseIdentity) []byte {
+	var b []byte
+	b = append(b, protoSInt(1, 1)...)
+	b = append(b, protoSInt(2, 2)...)
+	b = append(b, protoString(3, appID)...)
+	b = append(b, protoString(4, id.DeviceID)...)
+	b = append(b, protoString(5, MedusaNonce)...)
+	b = append(b, protoString(6, "!noperm!")...)
+	b = append(b, protoString(7, "!notset!")...)
+	b = append(b, protoString(12, "Asia/Shanghai,8")...)
+	b = append(b, protoString(13, "zh_CN")...)
+	b = append(b, protoString(22, id.OSVersion)...)
+	b = append(b, protoSInt(25, MedusaDeviceStartedMS)...)
+	b = append(b, protoString(30, id.DeviceType)...)
+	b = append(b, protoString(31, id.DeviceBrand)...)
+	b = append(b, protoString(32, id.DeviceType)...)
+	b = append(b, protoString(34, id.DeviceBrand)...)
+	b = append(b, protoString(36, "arm64-v8a")...)
+	return b
+}
+
+func envV5Sparse(id V5SparseIdentity) []byte {
+	var b []byte
+	b = append(b, protoString(6, "v04.10.03.04-bugfix")...)
+	b = append(b, protoString(8, id.Channel)...)
+	b = append(b, protoBytes(12, deviceProtoV5Sparse(id))...)
+	b = append(b, protoString(14, id.VersionName)...)
+	return b
+}
+
+func assembleMedusaV5Sparse(query string, body []byte, khronos uint32, id V5SparseIdentity, ent Entropy) string {
+	querySM3 := sm3Sum([]byte(query))
+	bodyMD5 := make([]byte, 16)
+	if body != nil {
+		s := md5Raw(body)
+		bodyMD5 = s[:]
+	}
+	f13 := hashF13V5(querySM3[:], bodyMD5, khronos)
+	flags := make([]byte, 8)
+
+	var nested []byte
+	nested = append(nested, protoSInt(1, 1)...)
+	nested = append(nested, protoSInt(2, 1)...)
+	nested = append(nested, protoSInt(3, 1)...)
+	nested = append(nested, protoSInt(5, 1)...)
+
+	message := protoBytes(1, v5Magic)
+	message = append(message, protoSInt(2, 5)...)
+	message = append(message, protoSInt(3, int64(ent.MessageRandom))...)
+	message = append(message, protoString(4, appID)...)
+	message = append(message, protoString(5, id.DeviceID)...)
+	message = append(message, protoString(6, v5License)...)
+	message = append(message, protoString(7, id.VersionName)...)
+	message = append(message, protoString(8, "v04.10.03-ml-android")...)
+	message = append(message, protoSInt(9, 0x040a0300)...)
+	message = append(message, protoBytes(10, flags)...)
+	message = append(message, protoSInt(12, int64(khronos))...)
+	message = append(message, protoBytes(13, f13)...)
+	message = append(message, protoBytes(14, querySM3[:6])...)
+	message = append(message, protoBytes(15, nested)...)
+	message = append(message, protoSInt(17, int64(khronos))...)
+	message = append(message, protoString(20, "none")...)
+	message = append(message, protoSInt(21, 312)...)
+	message = append(message, protoBytes(23, envV5Sparse(id))...)
+	message = append(message, protoString(24, `{"cmr":16777216,"cmr2":16777216,"un_h":11,"vpn":0,"kd":0,"dyn":"","do":1,"tk":true}`)...)
+
+	hash, seed := keyHash(v5SignKey, ent.Random)
+	transformed := append(append([]byte{}, flags...), xmxor(message, hash[:])...)
+	for i, j := 0, len(transformed)-1; i < j; i, j = i+1, j-1 {
+		transformed[i], transformed[j] = transformed[j], transformed[i]
+	}
+	for i := range transformed {
+		transformed[i] ^= seed[(^i)&3]
+	}
+	check := uint32(0x18000001) | (uint32(querySM3[0]&63) << 14) | (uint32(f13[0]&63) << 8)
+	packed := []byte{0xca}
+	packed = append(packed, le32(ent.PackedRandom)...)
+	packed = append(packed, le32(check)...)
+	packed = append(packed, transformed...)
+	packed = append(packed, byte(ent.Random>>16), byte(ent.Random>>24))
+
+	keyA := md5Raw(v5SignKey[:16])
+	keyB := md5Raw(v5SignKey[16:])
+	encrypted := newAESV3V5(keyA[:], khronos).encryptV5(packed, keyB[:])
+
+	prefix := append(le32(5), v5Magic...)
+	tsLE := le32(khronos)
+	for i := range prefix {
+		prefix[i] ^= tsLE[i&3]
+	}
+	out := append([]byte{}, prefix...)
+	out = append(out, byte(ent.Random&255), byte((ent.Random>>8)&255), 0, 1)
+	out = append(out, encrypted...)
+	return base64.StdEncoding.EncodeToString(out)
+}
+
+// SignPlaybackV5Sparse signs one sparse-variant playback request.
+// pairs are the query pairs in wire order WITHOUT _rticket and
+// WITHOUT any ts pair (the v5 query carries no ts; appending one
+// answers empty); the ticket is appended last and advanced from
+// nowMillis until the digest lands on branch 12. body is the exact
+// gzipped request body that will be sent.
+func SignPlaybackV5Sparse(pairs [][2]string, nowMillis int64, id V5SparseIdentity, body []byte, entropy *Entropy) (string, map[string]string) {
+	ent := Entropy{}
+	if entropy != nil {
+		ent = *entropy
+	} else {
+		ent = drawEntropy(nowMillis)
+	}
+	khronos := uint32(nowMillis / 1000)
+	var query string
+	for offset := int64(0); offset < 1024; offset++ {
+		ticket := nowMillis + offset
+		withTicket := append([][2]string{}, pairs...)
+		withTicket = append(withTicket, [2]string{"_rticket", strconv.FormatInt(ticket, 10)})
+		query = encodeQuery(withTicket)
+		if v5BranchOK(query, body, khronos) {
+			break
+		}
+	}
+	headers := map[string]string{
+		"x-khronos":    strconv.FormatUint(uint64(khronos), 10),
+		"x-helios":     assembleHeliosV5(khronos, ent.HeliosRandom),
+		"x-medusa":     assembleMedusaV5Sparse(query, body, khronos, id, ent),
+		"Content-Type": "application/json; charset=utf-8",
+	}
+	if body != nil {
+		sum := md5Raw(body)
+		headers["x-ss-stub"] = strings.ToUpper(hex.EncodeToString(sum[:]))
+	}
+	return query, headers
+}

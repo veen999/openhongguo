@@ -1068,3 +1068,25 @@ func TestParseToneInfoReadsTones(t *testing.T) {
 		t.Fatalf("tts tones = %+v", got)
 	}
 }
+
+func TestParsePlaybackVideoModelV5Flat(t *testing.T) {
+	playback, err := ParsePlayback(fixture(t, "videomodelv5-playback.json"), "7513853006417234969")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(playback.Streams) != 5 {
+		t.Fatalf("streams = %d, want 5", len(playback.Streams))
+	}
+	maxH := 0
+	for _, s := range playback.Streams {
+		if s.Height > maxH {
+			maxH = s.Height
+		}
+	}
+	if maxH != 1920 {
+		t.Fatalf("max height = %d, want 1920", maxH)
+	}
+	if !playback.Protected || playback.KeyMaterial == "" {
+		t.Fatalf("protected=%v keyMaterial empty=%v", playback.Protected, playback.KeyMaterial == "")
+	}
+}

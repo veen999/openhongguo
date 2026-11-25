@@ -81,3 +81,32 @@ func TestGorgonHeliosAndMedusaMatchReference(t *testing.T) {
 		t.Fatal("medusa leaked a token field name")
 	}
 }
+
+func TestSignPlaybackV5SparseShape(t *testing.T) {
+	pairs := [][2]string{{"aid", "8662"}, {"device_id", "12345"}}
+	id := V5SparseIdentity{DeviceID: "12345", VersionName: "7.4.5.32", Channel: "update_64", OSVersion: "16", DeviceType: "25053RT47C", DeviceBrand: "Redmi"}
+	body := []byte("gzipped-body")
+	now := int64(1795600000000)
+	query, headers := SignPlaybackV5Sparse(pairs, now, id, body, nil)
+	if !v5BranchOK(query, body, uint32(now/1000)) {
+		t.Fatal("query does not land on branch 12")
+	}
+	for _, banned := range []string{"ts=", "x-argus", "x-ladon", "x-gorgon"} {
+		if strings.Contains(query, banned) {
+			t.Fatalf("query carries %q: %s", banned, query)
+		}
+	}
+	for _, want := range []string{"x-khronos", "x-helios", "x-medusa", "x-ss-stub", "Content-Type"} {
+		if headers[want] == "" {
+			t.Fatalf("missing header %s", want)
+		}
+	}
+	for _, banned := range []string{"x-argus", "x-ladon", "x-gorgon"} {
+		if _, ok := headers[banned]; ok {
+			t.Fatalf("sparse signer emitted %s", banned)
+		}
+	}
+	if len(headers["x-medusa"]) < 400 {
+		t.Fatalf("medusa suspiciously short: %d", len(headers["x-medusa"]))
+	}
+}

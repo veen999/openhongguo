@@ -37,7 +37,10 @@ func (c *Client) ProbePlaybackChannels(ctx context.Context) map[string]bool {
 		mu.Unlock()
 	}
 	if p, err := c.playbackIdentity(ctx); err == nil {
-		wg.Add(6)
+		wg.Add(7)
+		go run(channelVideoModelV5, func() (*model.Playback, error) {
+			return c.resolvePlaybackViaVideoModelV5(ctx, p, probeEpisodeID)
+		})
 		go run(channelV5, func() (*model.Playback, error) {
 			return c.resolvePlaybackViaMobileV5(ctx, p, probeEpisodeID)
 		})

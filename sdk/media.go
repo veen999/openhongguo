@@ -152,14 +152,15 @@ func (c *Client) resolvePlaybackChain(ctx context.Context, episodeID string, mod
 		// 此通道拿到 5 档模型）。故 tab 多集紧随 v5，不再排在已退役
 		// 的 player/multi 之后白等。
 		head := []identityChannel{
+			{channelVideoModelV5, c.resolvePlaybackViaVideoModelV5},
 			{channelV5, c.resolvePlaybackViaMobileV5},
 			{channelPlayerV1, c.resolvePlaybackViaPlayerV1},
 			{channelTabMulti, c.resolvePlaybackViaTabMulti},
 		}
 		if plan.preferred == channelTabMulti {
-			head[0], head[1], head[2] = head[2], head[0], head[1]
+			head[0], head[1], head[2], head[3] = head[3], head[0], head[1], head[2]
 		}
-		if plan.attempt(channelV5) || plan.attempt(channelPlayerV1) || plan.attempt(channelTabMulti) {
+		if plan.attempt(channelVideoModelV5) || plan.attempt(channelV5) || plan.attempt(channelPlayerV1) || plan.attempt(channelTabMulti) {
 			if pb, err := c.playbackIdentity(ctx); err == nil {
 				for _, ch := range head {
 					if playback, err := c.tryPlaybackChannel(ctx, plan, ch.name, func() (*model.Playback, error) {
@@ -241,6 +242,66 @@ func (c *Client) tryPlaybackChannel(ctx context.Context, plan chainPlan, name st
 		return nil, nil
 	}
 	return c.attemptPlaybackChannel(ctx, name, attempt)
+}
+
+// videoModelV5Hosts 是稀疏变体通道的主机轮换序：B 主机为该实现
+// 的默认首选，hl/lf 为同池备选，C 主机为另一实证来源用过的主机，
+// 殿后。空响应/传输错误换下一台，业务码错误不换（与主机无关）。
+var videoModelV5Hosts = []string{
+	"https://api5-normal-sinfonlineb.fqnovel.com",
+	"https://api5-normal-hl.fqnovel.com",
+	"https://api5-normal-lf.fqnovel.com",
+	"https://api5-normal-sinfonlinec.fqnovel.com",
+}
+
+// resolvePlaybackViaVideoModelV5 fetches the playback model through
+// the sparse v04.10.03 variant (hongguoTV's PlaybackV5Signer shape):
+// POST /novel/player/video_model/v1/ with a gzipped biz body, the
+// fixed 20-pair 7.4.5.32 query template (no ts pair), and the sparse
+// medusa (field 21 = 312, sparse device block, fixed {1,1,1,1}
+// counters). Live-verified 2026-11-25 from a datacenter egress —
+// code=0 with the full 5-tier ladder on episodes where every dense-
+// variant channel answers empty — so it heads the local chain. The
+// response is the flat layout: data.video_model, parsed by
+// protocol.ParsePlayback directly.
+func (c *Client) resolvePlaybackViaVideoModelV5(ctx context.Context, p *DeviceProfile, episodeID string) (*model.Playback, error) {
+	rawBody, err := protocol.PlaybackVideoModelBody(episodeID)
+	if err != nil {
+		return nil, err
+	}
+	body, err := gzipBytes(rawBody)
+	if err != nil {
+		return nil, err
+	}
+	id := sign.V5SparseIdentity{
+		DeviceID: p.DeviceID, VersionName: protocol.PlaybackV041003VersionName,
+		Channel: "update_64", OSVersion: "16", DeviceType: "25053RT47C", DeviceBrand: "Redmi",
+	}
+	rawQuery, headers := sign.SignPlaybackV5Sparse(protocol.PlaybackV5SparsePairs(p.DeviceID, p.InstallID, p.CDID), c.clock().UnixMilli(), id, body, nil)
+	h := make(map[string]string, len(headers)+3)
+	for k, v := range headers {
+		h[k] = v
+	}
+	h["User-Agent"] = protocol.PlaybackV5SparseUserAgent
+	h["Accept"] = "application/json"
+	h["Content-Encoding"] = "gzip"
+	var lastErr error
+	for _, host := range videoModelV5Hosts {
+		raw, _, err := c.doRaw(ctx, "POST", host+protocol.PathPlayback+"?"+rawQuery, h, body)
+		if err != nil {
+			lastErr = err
+			continue
+		}
+		playback, err := protocol.ParsePlayback(raw, episodeID)
+		if err != nil {
+			return nil, err
+		}
+		if playback.Protected {
+			return playback, ErrDRMProtected
+		}
+		return playback, nil
+	}
+	return nil, lastErr
 }
 
 // resolvePlaybackViaMobileV5 fetches the playback model through the
