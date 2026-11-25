@@ -615,7 +615,9 @@ func TestClearPlaybackReturnsPlayableStream(t *testing.T) {
 		case protocol.PathRegister:
 			_, _ = w.Write(reg)
 		case protocol.PathPlayback:
-			signed = r.Header.Get("x-gorgon") != "" && r.Header.Get("x-ss-stub") != ""
+			// 现行播放签名契约：v5 信封 x-medusa + 真 x-argus + body stub
+			// （旧代 x-gorgon 已随 2026-11-25 签名改版停发）。
+			signed = r.Header.Get("x-medusa") != "" && r.Header.Get("x-argus") != "" && r.Header.Get("x-ss-stub") != ""
 			_, _ = w.Write(clear)
 		default:
 			http.NotFound(w, r)

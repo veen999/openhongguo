@@ -153,12 +153,13 @@ func (c *Client) resolvePlaybackChain(ctx context.Context, episodeID string, mod
 		// 的 player/multi 之后白等。
 		head := []identityChannel{
 			{channelV5, c.resolvePlaybackViaMobileV5},
+			{channelPlayerV1, c.resolvePlaybackViaPlayerV1},
 			{channelTabMulti, c.resolvePlaybackViaTabMulti},
 		}
 		if plan.preferred == channelTabMulti {
-			head[0], head[1] = head[1], head[0]
+			head[0], head[1], head[2] = head[2], head[0], head[1]
 		}
-		if plan.attempt(channelV5) || plan.attempt(channelTabMulti) {
+		if plan.attempt(channelV5) || plan.attempt(channelPlayerV1) || plan.attempt(channelTabMulti) {
 			if pb, err := c.playbackIdentity(ctx); err == nil {
 				for _, ch := range head {
 					if playback, err := c.tryPlaybackChannel(ctx, plan, ch.name, func() (*model.Playback, error) {
@@ -271,6 +272,50 @@ func (c *Client) resolvePlaybackViaMobileV5(ctx context.Context, p *DeviceProfil
 	h["Accept"] = "application/json; charset=utf-8,application/x-protobuf"
 	h["x-xs-from-web"] = "0"
 	raw, _, err := c.doRaw(ctx, "POST", c.apiOrigin+protocol.PathPlaybackV5+"?"+rawQuery, h, body)
+	if err != nil {
+		return nil, err
+	}
+	return finishMobileV5Playback(raw, episodeID)
+}
+
+// resolvePlaybackViaPlayerV1 fetches the playback model through the
+// v04.10.03-profile channel: POST /novel/player/multi_video_model/
+// player/v1 (PathPlaybackMobileV5), gzipped device_level-1 body with
+// no dr_scene, the 7.4.5.32 query profile filled in place by
+// sign.SignPlaybackV5InPlace, signed with the v04.10.03 tables
+// (x-khronos / x-helios / x-medusa-v5 + x-ss-stub). This is the shape
+// upstream's current mainline uses as its primary fetch (its PR #23
+// sibling channel above carries the older v04.06.04 profile); the
+// response layout matches the mobile v5 channel, so parsing is
+// shared. Sandbox probes from a datacenter egress cannot confirm
+// issuance for any local shape — the channel earns its place from
+// the upstream fork's same-day residential-network measurement and
+// is health-tracked like every other channel, so a dead phase costs
+// one fast attempt.
+func (c *Client) resolvePlaybackViaPlayerV1(ctx context.Context, p *DeviceProfile, episodeID string) (*model.Playback, error) {
+	rawBody, err := protocol.PlaybackV041003Body(episodeID)
+	if err != nil {
+		return nil, err
+	}
+	body, err := gzipBytes(rawBody)
+	if err != nil {
+		return nil, err
+	}
+	d := c.deviceOf(p)
+	v5id := sign.V5Identity{DeviceID: p.DeviceID, VersionName: protocol.PlaybackV041003VersionName, Channel: d.Channel, OSVersion: d.OSVersion, DeviceType: d.Model}
+	rawQuery, headers, ok := sign.SignPlaybackV5InPlace(protocol.PlaybackV041003Pairs(c.identity(p)), c.clock().UnixMilli(), v5id, body, nil)
+	if !ok {
+		return nil, fmt.Errorf("v04.10.03 signing branch unavailable for episode %s", episodeID)
+	}
+	h := make(map[string]string, len(headers)+4)
+	for k, v := range headers {
+		h[k] = v
+	}
+	h["User-Agent"] = protocol.UserAgentCronet(d, protocol.PlaybackV041003VersionCode)
+	h["Accept"] = "application/json; charset=utf-8,application/x-protobuf"
+	h["x-xs-from-web"] = "0"
+	h["Content-Encoding"] = "gzip"
+	raw, _, err := c.doRaw(ctx, "POST", c.apiOrigin+protocol.PathPlaybackMobileV5+"?"+rawQuery, h, body)
 	if err != nil {
 		return nil, err
 	}
@@ -506,11 +551,11 @@ func (c *Client) resolvePlaybackViaTab(ctx context.Context, episodeID string) (*
 }
 
 // resolvePlaybackViaPlayer is the original signed video_model POST.
-// Since 2026-11-10 the endpoint validates real x-argus / x-ladon and
-// rejects the request when x-medusa rides along, so it is signed with
-// SignPlaybackPOST (Argus 551 envelope + Ladon, no Medusa) — the fix
-// from upstream PR beilunyang/openhongguo#7 (bed1459), live-verified
-// there against this same endpoint.
+// Since 2026-11-10 the endpoint validates real x-argus / x-ladon
+// (upstream PR beilunyang/openhongguo#7), and since 2026-11-23 it
+// additionally requires x-medusa — the current v5 envelope, not the
+// legacy one (upstream PR #25; see sign.SignPlaybackPOST for the
+// flip history and the 2026-11-25 probe evidence).
 func (c *Client) resolvePlaybackViaPlayer(ctx context.Context, episodeID string) (*model.Playback, error) {
 	p, err := c.ensureSearchGuest(ctx)
 	if err != nil {
@@ -521,7 +566,9 @@ func (c *Client) resolvePlaybackViaPlayer(ctx context.Context, episodeID string)
 		return nil, err
 	}
 	ticket := c.clock().UnixMilli()
-	rawQuery, headers := sign.SignPlaybackPOST(protocol.PathPlayback, protocol.DeviceQueryPairs(c.identity(p)), ticket, p.DeviceID, protocol.VersionName, body, nil)
+	d := c.deviceOf(p)
+	v5id := sign.V5Identity{DeviceID: p.DeviceID, VersionName: protocol.VersionName, Channel: d.Channel, OSVersion: d.OSVersion, DeviceType: d.Model}
+	rawQuery, headers := sign.SignPlaybackPOST(protocol.PathPlayback, protocol.DeviceQueryPairs(c.identity(p)), ticket, v5id, body, nil)
 	raw, _, err := c.doRaw(ctx, "POST", c.apiOrigin+protocol.PathPlayback+"?"+rawQuery, anonymousHeaders(c, p, ticket, headers), body)
 	if err != nil {
 		return nil, err

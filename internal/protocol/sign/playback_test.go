@@ -126,13 +126,17 @@ func TestSignPlaybackPOSTShape(t *testing.T) {
 	ent := &Entropy{NowSecs: 1_700_000_000, GorgonRandom: 0x1234, HeliosRandom: 1, MessageRandom: 1, Random: 1, PackedRandom: 1, EnvLaunch: 100, EnvPID: 10001}
 	pairs := [][2]string{{"aid", "8662"}, {"device_id", "7000000000000000001"}, {"iid", "7000000000000000002"}, {"version_name", "7.3.9.32"}}
 	body := []byte(`{"req_type":1}`)
-	_, headers := SignPlaybackPOST("/novel/player/video_model/v1/", pairs, 1_700_000_000_123, "7000000000000000001", "7.3.9.32", body, ent)
+	_, headers := SignPlaybackPOST("/novel/player/video_model/v1/", pairs, 1_700_000_000_123, V5Identity{DeviceID: "7000000000000000001", VersionName: "7.3.9.32", Channel: "xiaomi_8662_64", OSVersion: "14", DeviceType: "23127PN0CC"}, body, ent)
 
-	// 自 2026-11-23 起播放请求必须保留 x-medusa（上游 PR #25）。
+	// 自 2026-11-23 起播放请求必须保留 x-medusa（上游 PR #25），且须为
+	// 现行 v5 信封；x-gorgon 不再发送（现行两种构造均不带旧代 gorgon）。
 	if headers["x-medusa"] == "" {
 		t.Fatal("playback request must carry x-medusa")
 	}
-	for _, h := range []string{"x-argus", "x-ladon", "x-gorgon", "x-helios", "x-khronos"} {
+	if headers["x-gorgon"] != "" {
+		t.Fatal("playback request must not carry the legacy x-gorgon")
+	}
+	for _, h := range []string{"x-argus", "x-ladon", "x-helios", "x-khronos"} {
 		if headers[h] == "" {
 			t.Fatalf("missing %s", h)
 		}

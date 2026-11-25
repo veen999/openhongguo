@@ -68,6 +68,63 @@ func PlaybackV5Pairs(id SearchIdentity) [][2]string {
 	}
 }
 
+// PlaybackV041003Pairs 是 v04.10.03 档 player/v1 通道的查询画像
+// （7.4.5.32/74532），顺序与构成按 2026-11-25 实测可达业务层的
+// 构造：_rticket 与 ts 是空占位，由 SignPlaybackV5InPlace 就地填充；
+// 与 PlaybackV5Pairs（7.4.3.32 档）相比无 pv_player 等附加字段、
+// 带 rom_version，device_id/iid 在尾部。
+func PlaybackV041003Pairs(id SearchIdentity) [][2]string {
+	d := id.Device.OrDefault()
+	kind, pad := "phone", "0"
+	if d.Pad {
+		kind, pad = "pad", "1"
+	}
+	version := PlaybackV041003VersionCode
+	return [][2]string{
+		{"device_platform", DevicePlatform},
+		{"os", "android"},
+		{"ssmix", "a"},
+		{"_rticket", ""},
+		{"ts", ""},
+		{"cdid", id.CDID},
+		{"channel", d.Channel},
+		{"aid", AID},
+		{"app_name", AppName},
+		{"version_code", version},
+		{"version_name", PlaybackV041003VersionName},
+		{"manifest_version_code", version},
+		{"update_version_code", version},
+		{"resolution", d.Resolution},
+		{"dpi", strconv.Itoa(d.DPI)},
+		{"device_type", d.Model},
+		{"device_brand", d.Brand},
+		{"language", "zh"},
+		{"os_api", strconv.Itoa(d.OSAPI)},
+		{"os_version", d.OSVersion},
+		{"ac", "wifi"},
+		{"host_abi", "arm64-v8a"},
+		{"dragon_device_type", kind},
+		{"is_pad", pad},
+		{"rom_version", d.Build},
+		{"device_id", id.DeviceID},
+		{"iid", id.InstallID},
+	}
+}
+
+// PlaybackV041003Body 是 v04.10.03 档的明文 JSON body（device_level 1、
+// 不带 dr_scene）；调用方 gzip 后把同一份字节同时用于签名和发送。
+func PlaybackV041003Body(episodeID string) ([]byte, error) {
+	return jsonMarshal(map[string]any{
+		"biz_param": map[string]any{
+			"detail_page_version": 0, "device_level": 1,
+			"disable_video_relate_book": false, "need_all_video_definition": true,
+			"need_mp4_align": false, "use_os_player": false, "use_server_dns": false,
+			"video_platform": 1024,
+		},
+		"mixed_video_id_map": map[string][]string{"1004": {episodeID}},
+	})
+}
+
 // PlaybackV5Body 返回明文 JSON；调用方把同一份字节同时用于签名和发送。
 //
 // device_level 与旧版播放协议一致用 4；此档下发的全是 bytevc1，ffmpeg/mpv 可解。

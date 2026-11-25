@@ -25,7 +25,7 @@ const probeEpisodeID = "7699003626647194649"
 func (c *Client) ProbePlaybackChannels(ctx context.Context) map[string]bool {
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
-	results := make(map[string]bool, 7)
+	results := make(map[string]bool, 8)
 	var mu sync.Mutex
 	var wg sync.WaitGroup
 	run := func(name string, attempt func() (*model.Playback, error)) {
@@ -37,9 +37,12 @@ func (c *Client) ProbePlaybackChannels(ctx context.Context) map[string]bool {
 		mu.Unlock()
 	}
 	if p, err := c.playbackIdentity(ctx); err == nil {
-		wg.Add(5)
+		wg.Add(6)
 		go run(channelV5, func() (*model.Playback, error) {
 			return c.resolvePlaybackViaMobileV5(ctx, p, probeEpisodeID)
+		})
+		go run(channelPlayerV1, func() (*model.Playback, error) {
+			return c.resolvePlaybackViaPlayerV1(ctx, p, probeEpisodeID)
 		})
 		go run(channelTabMulti, func() (*model.Playback, error) {
 			return c.resolvePlaybackViaTabMulti(ctx, p, probeEpisodeID)

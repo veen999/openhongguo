@@ -72,6 +72,9 @@ func (c *Client) ProbeSigningMode(ctx context.Context, mode string) SigningModeP
 			} else if m, _ := c.resolvePlaybackViaMobileV5(bypassCtx, p, probeEpisodeID); m != nil {
 				c.noteChannelOutcome(bypassCtx, channelV5, m, nil)
 				pb = m
+			} else if m, _ := c.resolvePlaybackViaPlayerV1(bypassCtx, p, probeEpisodeID); m != nil {
+				c.noteChannelOutcome(bypassCtx, channelPlayerV1, m, nil)
+				pb = m
 			}
 		}
 	}

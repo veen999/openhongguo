@@ -11,6 +11,7 @@ import (
 	"math/bits"
 	"net/url"
 	"strconv"
+	"strings"
 )
 
 // The playback model endpoint (/novel/player/video_model/v1/) began rejecting
@@ -48,26 +49,85 @@ var (
 	argusTail    = []byte{0xea, 0xfb, 0x2c, 0xfe, 0x85, 0x68, 0x51, 0x91, 0x54}
 )
 
-// SignPlaybackPOST signs the video_model request. It is SignPOST plus real
-// x-argus and x-ladon headers, and it drops x-medusa: when the account-style
-// Medusa header rides along with a valid 551 envelope the live service answers
-// playback with an empty 200 body, while removing it returns the full model
-// (observed 2026-11-10). Account and non-playback requests keep their Medusa.
-func SignPlaybackPOST(path string, pairs [][2]string, nowMillis int64, deviceID, versionName string, body []byte, entropy *Entropy) (string, map[string]string) {
-	query, headers := signRequest(path, pairs, nowMillis, deviceID, versionName, body, entropy)
-	// signRequest may bump khronos by a few milliseconds to pick an F13 branch,
-	// so read back the timestamp it actually put in the query.
-	khronos, _ := strconv.ParseUint(headers["x-khronos"], 10, 64)
-	ts := uint32(khronos)
+// SignPlaybackPOST signs the video_model request: real x-argus /
+// x-ladon (551 envelope) plus the current-generation x-medusa.
+//
+// Medusa history on this endpoint: before 2026-11-10 the account-style
+// (legacy-envelope) medusa made the service answer empty, so it was
+// dropped; since 2026-11-23 the rule flipped (upstream PR #25) — a
+// playback request without x-medusa gets an empty 200 body. The
+// medusa that must ride along is the current v5 envelope
+// (assembleMedusaV5, v04.10.03 constants, field21=369, shaped device
+// block): the legacy envelope this package's signRequest still builds
+// (field21=312, envelope version 3) is silently discarded by the
+// service on this endpoint, while the v5 envelope is parsed into the
+// business layer (sandbox probe 2026-11-25: legacy envelope → 0
+// bytes, v5 envelope → structured response; a fork measuring on a
+// residential network the same day got the full 5-tier model with
+// this shape). Because the v5 medusa digest is pinned to branch 12,
+// the ticket hunt below advances ts/_rticket until the digest lands
+// there — signRequest's own hunt targets the legacy branch and its
+// helios/gorgon are the older generation, so this signer assembles
+// the query and headers itself (no x-gorgon: both current-era
+// constructions either omit it or use the newer generation).
+func SignPlaybackPOST(path string, pairs [][2]string, nowMillis int64, id V5Identity, body []byte, entropy *Entropy) (string, map[string]string) {
+	ent := Entropy{}
+	if entropy != nil {
+		ent = *entropy
+	} else {
+		ent = drawEntropy(nowMillis)
+	}
 	bodyMD5 := [16]byte{}
 	if len(body) > 0 {
 		bodyMD5 = md5Raw(body)
 	}
+	var query string
+	var ticket int64
+	var khronos uint32
+	for offset := int64(0); offset < 1024; offset++ {
+		ticket = nowMillis + offset
+		khronos = uint32(ticket / 1000)
+		withTicket := append(append([][2]string{}, pairs...),
+			[2]string{"ts", strconv.FormatUint(uint64(khronos), 10)},
+			[2]string{"_rticket", strconv.FormatInt(ticket, 10)},
+		)
+		q := encodeQuery(withTicket)
+		if v5BranchOK(q, body, khronos) {
+			query = q
+			break
+		}
+	}
+	if query == "" {
+		// No branch-12 ticket in range (probability ~0); still emit a
+		// well-formed request on the first ticket rather than none.
+		ticket = nowMillis
+		khronos = uint32(ticket / 1000)
+		query = encodeQuery(append(append([][2]string{}, pairs...),
+			[2]string{"ts", strconv.FormatUint(uint64(khronos), 10)},
+			[2]string{"_rticket", strconv.FormatInt(ticket, 10)},
+		))
+	}
 	aid := playbackAID(query)
-	headers["x-argus"] = argusHeader(query, bodyMD5, ts, randUint32(), aid, queryValue(query, "device_id"), queryValue(query, "iid"))
-	headers["x-ladon"] = ladonHeader(ts, randUint32(), aid)
-	// 自 2026-11-23 起播放请求必须保留 x-medusa（上游 PR #25）：缺它服务端
-	// 返回空响应；此前（11-10 前）是带它才空，规则已翻转。
+	headers := map[string]string{
+		"Accept":                    "application/json; charset=utf-8,application/x-protobuf",
+		"x-xs-from-web":             "0",
+		"x-ss-req-ticket":           strconv.FormatInt(ticket, 10),
+		"x-tt-request-tag":          "t=0;n=0",
+		"sdk-version":               "2",
+		"passport-sdk-version":      "50561",
+		"x-vc-bdturing-sdk-version": "3.7.2.cn",
+		"x-khronos":                 strconv.FormatUint(uint64(khronos), 10),
+		"x-argus":                   argusHeader(query, bodyMD5, khronos, randUint32(), aid, queryValue(query, "device_id"), queryValue(query, "iid")),
+		"x-ladon":                   ladonHeader(khronos, randUint32(), aid),
+		"x-helios":                  assembleHeliosV5(khronos, ent.HeliosRandom),
+		"x-medusa":                  assembleMedusaV5(query, body, khronos, id, ent),
+		"x-tt-dt":                   "",
+		"Content-Type":              "application/json; charset=UTF-8",
+	}
+	if len(body) > 0 {
+		sum := md5Raw(body)
+		headers["x-ss-stub"] = strings.ToUpper(hex.EncodeToString(sum[:]))
+	}
 	return query, headers
 }
 

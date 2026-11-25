@@ -51,6 +51,12 @@ const (
 	// under the v5 tables (see sign.SignPlaybackV5). The model sits at
 	// data["1004"][episode].video_model in the response.
 	PathPlaybackMobileV5 = "/novel/player/multi_video_model/player/v1"
+	// PlaybackV041003VersionCode / Name 是 v04.10.03 档（player/v1 通道
+	// 与新版 v5 信封 medusa）配套的客户端画像版本，与 PlaybackV5Pairs
+	// 的 7.4.3.32 档分开：两个档的查询画像、body 与签名常量成套使用，
+	// 不可混搭。
+	PlaybackV041003VersionCode = "74532"
+	PlaybackV041003VersionName = "7.4.5.32"
 	// PathPlaybackMultiV2Fmt is the seriessdk V2 batch model read: the
 	// dr_scene rides in the path (and again in the body's dr_scene).
 	PathPlaybackMultiV2Fmt = "/novel/player/multi_video_model/%s/v1/"

@@ -92,39 +92,39 @@ func resetClient(t *testing.T, h http.Handler, resets *int) (*sdk.Client, *syncL
 }
 
 func TestEmptyPlaybackMovesToFreshDevice(t *testing.T) {
-	// 播放身份注册（registers=1）后 v5、tab 多集在 registers≤emptyFor
-	// 时皆空；目录游客注册（registers=2）后 player 单集通道拿到模型，
-	// 共 3 次播放请求。
+	// 播放身份注册（registers=1）后 v5、playerv1、tab 多集在
+	// registers≤emptyFor 时皆空；目录游客注册（registers=2）后 player
+	// 单集通道拿到模型，共 4 次播放请求。
 	s := &devicePerRequest{emptyFor: 1}
 	client, _ := resetClient(t, s.handler(t), nil)
 	pb, err := client.ResolvePlayback(context.Background(), "7100000000000201", sdk.PlaybackOptions{})
 	if err != nil || pb == nil {
 		t.Fatalf("pb = %v err = %v", pb, err)
 	}
-	if s.registers != 2 || s.playbacks != 3 {
+	if s.registers != 2 || s.playbacks != 4 {
 		t.Fatalf("registers = %d playbacks = %d", s.registers, s.playbacks)
 	}
 }
 
 func TestEmptyPlaybackGivesUpAfterDefaultResets(t *testing.T) {
 	// 全部通道恒空：单条取址链每轮 = 播放身份 2 次注册（首注 + 丢弃
-	// 重注）+ 目录游客 1 次注册，播放请求 8 次（v5 + player 单集 +
-	// multi×2 + tab-multi + tab-multi 重试 + tab 单集 + player 单集
-	// 收尾）；withFreshDevice 默认 2 次重置共 3 轮（注册跨轮复用，
-	// 单链合计 7 次注册、24 次播放请求）。默认客户端锚点为本地计算，
-	// 本地链全空后策略层先做多通道复核（2026-11-23 规则：探测完本地
-	// 多个通道、都不可用再换远程）：并发探测 7 通道 + 当前身份顺序
-	// 复核 tab 多集/v5 + 换新鲜播放身份复核 tab 多集，共 +10 次播放
-	// 请求、+1 次注册；确认全不可用才切 unidbg 并整链重试一次：播
-	// 放请求 24+10+24=58；第二链的播放身份已被首链丢弃需重注、目
-	// 录游客跨链复用，注册合计 13 次。
+	// 重注）+ 目录游客 1 次注册，播放请求 9 次（v5 + playerv1 +
+	// player 单集 + multi×2 + tab-multi + tab-multi 重试 + tab 单集
+	// + player 单集收尾）；withFreshDevice 默认 2 次重置共 3 轮（注
+	// 册跨轮复用，单链合计 7 次注册、27 次播放请求）。默认客户端锚
+	// 点为本地计算，本地链全空后策略层先做多通道复核（2026-11-23
+	// 规则：探测完本地多个通道、都不可用再换远程）：并发探测 8 通
+	// 道 + 当前身份顺序复核 tab 多集/v5 + 换新鲜播放身份复核 tab
+	// 多集，共 +11 次播放请求、+1 次注册；确认全不可用才切 unidbg
+	// 并整链重试一次：播放请求 27+11+27=65；第二链的播放身份已被
+	// 首链丢弃需重注、目录游客跨链复用，注册合计 13 次。
 	s := &devicePerRequest{emptyFor: 99}
 	client, _ := resetClient(t, s.handler(t), nil)
 	_, err := client.ResolvePlayback(context.Background(), "7100000000000201", sdk.PlaybackOptions{})
 	if !errors.Is(err, sdk.ErrAnonymousLimited) {
 		t.Fatalf("err = %v", err)
 	}
-	if s.registers != 13 || s.playbacks != 58 {
+	if s.registers != 13 || s.playbacks != 65 {
 		t.Fatalf("registers = %d playbacks = %d", s.registers, s.playbacks)
 	}
 }

@@ -73,6 +73,59 @@ func SignPlaybackV5(pairs [][2]string, nowMillis int64, id V5Identity, body []by
 	return query, headers
 }
 
+// SignPlaybackV5InPlace 与 SignPlaybackV5 同档（v04.10.03），但按
+// 上游现行签名器的就地填充方式工作：pairs 里 _rticket / ts 是空占位
+// （顺序即线上顺序），签名器把 ts 填为 khronos 秒、把 _rticket 从
+// nowMillis 起逐毫秒推进，直到摘要落到 branch 12。找不到可用票据
+// 时返回 ok=false。player/v1 通道的画像自带这两个占位，必须用本
+// 函数签，追加式签名会改变字段顺序。
+func SignPlaybackV5InPlace(pairs [][2]string, nowMillis int64, id V5Identity, body []byte, entropy *Entropy) (string, map[string]string, bool) {
+	ent := Entropy{}
+	if entropy != nil {
+		ent = *entropy
+	} else {
+		ent = drawEntropy(nowMillis)
+	}
+	ts := uint32(nowMillis / 1000)
+	withTicket := append([][2]string(nil), pairs...)
+	slot := -1
+	for i, kv := range withTicket {
+		if kv[0] == "_rticket" {
+			slot = i
+			break
+		}
+	}
+	if slot < 0 {
+		withTicket = append(withTicket, [2]string{"_rticket", ""})
+		slot = len(withTicket) - 1
+	}
+	tsText := strconv.FormatUint(uint64(ts), 10)
+	for i, kv := range withTicket {
+		if kv[0] == "ts" {
+			withTicket[i][1] = tsText
+		}
+	}
+	for offset := int64(0); offset < 1024; offset++ {
+		withTicket[slot][1] = strconv.FormatInt(nowMillis+offset, 10)
+		query := encodeQuery(withTicket)
+		if !v5BranchOK(query, body, ts) {
+			continue
+		}
+		headers := map[string]string{
+			"x-khronos":    strconv.FormatUint(uint64(ts), 10),
+			"x-helios":     assembleHeliosV5(ts, ent.HeliosRandom),
+			"x-medusa":     assembleMedusaV5(query, body, ts, id, ent),
+			"Content-Type": "application/json; charset=utf-8",
+		}
+		if body != nil {
+			sum := md5Raw(body)
+			headers["x-ss-stub"] = strings.ToUpper(hex.EncodeToString(sum[:]))
+		}
+		return query, headers, true
+	}
+	return "", nil, false
+}
+
 // v5BranchOK reports whether the (query, body, khronos) digest lands
 // on branch 12, the only branch the v5 medusa digest can express.
 func v5BranchOK(query string, body []byte, khronos uint32) bool {

@@ -243,6 +243,14 @@ func anonymousHeaders(c *Client, p *DeviceProfile, ticket int64, headers map[str
 	headers["x-ss-dp"] = protocol.AID
 	headers["lc"] = "101"
 	headers["x-reading-request"] = protocol.ReadingRequestID(ticket, c.randomInt31())
+	// 区域头带档案的实际下发值（上游现行 anonymousHeaders 的做法）：
+	// 此前只有播放多集通道硬编码 cn/did，其余匿名请求不带区域头。
+	if p != nil && p.StoreRegion != "" {
+		headers["x-tt-store-region"] = p.StoreRegion
+	}
+	if p != nil && p.StoreRegionSrc != "" {
+		headers["x-tt-store-region-src"] = p.StoreRegionSrc
+	}
 	if p != nil && p.DeviceToken != "" {
 		headers["x-tt-dt"] = p.DeviceToken
 	}
