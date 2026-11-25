@@ -227,7 +227,7 @@ func assembleMedusaV5(query string, body []byte, khronos uint32, id V5Identity, 
 	message = append(message, protoBytes(15, nested)...)
 	message = append(message, protoSInt(17, int64(khronos))...)
 	message = append(message, protoString(20, "none")...)
-	message = append(message, protoSInt(21, 377)...)
+	message = append(message, protoSInt(21, 369)...)
 	message = append(message, protoBytes(23, envV5(id))...)
 	message = append(message, protoString(24, `{"cmr":16777216,"cmr2":16777216,"un_h":11,"vpn":0,"kd":0,"dyn":"","do":1,"tk":true}`)...)
 

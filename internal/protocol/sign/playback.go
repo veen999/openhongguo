@@ -66,7 +66,8 @@ func SignPlaybackPOST(path string, pairs [][2]string, nowMillis int64, deviceID,
 	aid := playbackAID(query)
 	headers["x-argus"] = argusHeader(query, bodyMD5, ts, randUint32(), aid, queryValue(query, "device_id"), queryValue(query, "iid"))
 	headers["x-ladon"] = ladonHeader(ts, randUint32(), aid)
-	delete(headers, "x-medusa")
+	// 自 2026-11-23 起播放请求必须保留 x-medusa（上游 PR #25）：缺它服务端
+	// 返回空响应；此前（11-10 前）是带它才空，规则已翻转。
 	return query, headers
 }
 

@@ -3,6 +3,7 @@ package sdk
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -373,11 +374,14 @@ func (c *Client) fridaTabHosts() []string {
 }
 
 // resolvePlaybackViaFrida：身份与签名都来自 frida 服务。取址顺序与
-// 服务方客户端一致：video_tab 单集（双主机轮换）优先，全灭再退
-// video_tab 多集。查询串的合并规则同样对齐：业务参数在前，服务档案
-// 的身份字段覆盖同名键（档案之外的字段不进查询串），最后追加 ts 与
-// _rticket；签好的六头与服务档案的 UA 一起发出。单个主机的空响应或
-// 错误码只跳过该主机，签名服务本身的错误立即上抛。
+// 服务方客户端一致：video_tab 单集（双主机轮换）优先，再退 video_tab
+// 多集；2026-11-24 起两条 video_tab GET 路由被服务端关死（真机签名
+// 也回空体），服务方客户端改走服务签名的 POST /novel/player/
+// video_model/v1/ 兜底（b482761），本实现同样在 GET 全灭后补这一发
+// （需服务支持 body 签名）。查询串的合并规则同样对齐：业务参数在
+// 前，服务档案的身份字段覆盖同名键（档案之外的字段不进查询串），
+// 最后追加 ts 与 _rticket；签好的六头与服务档案的 UA 一起发出。
+// 单个主机的空响应或错误码只跳过该主机，签名服务本身的错误立即上抛。
 func (c *Client) resolvePlaybackViaFrida(ctx context.Context, episodeID string) (*model.Playback, error) {
 	prof, err := c.fridaProfileCached(ctx)
 	if err != nil {
@@ -437,10 +441,119 @@ func (c *Client) resolvePlaybackViaFrida(ctx context.Context, episodeID string) 
 		}
 		lastErr = perr
 	}
+	// video_tab 两条 GET 全灭后的兜底：服务签名的 POST 播放路由
+	// （/novel/player/video_model/v1/）。带 body 的请求只有服务声明
+	// 支持 body 签名时才能签；不支持就维持原来的全灭结论。
+	if prof.supportsBodySigning {
+		for _, origin := range c.fridaTabHosts() {
+			raw, signFailed, err := c.fridaPlayerPOST(ctx, prof, origin, episodeID)
+			if signFailed {
+				return nil, err
+			}
+			if err != nil {
+				lastErr = err
+				continue
+			}
+			if len(bytes.TrimSpace(raw)) == 0 {
+				continue
+			}
+			playback, perr := parseTabPlayback(raw, episodeID)
+			if playback != nil {
+				return playback, perr
+			}
+			lastErr = perr
+		}
+	}
 	if lastErr != nil {
 		return nil, lastErr
 	}
 	return nil, ErrAnonymousLimited
+}
+
+// fridaPlayerPOST 组装并发出一次 frida 签名的 POST 播放请求
+// （/novel/player/video_model/v1/，带 body 签名）。查询串只带服务
+// 档案的身份字段（业务数据在 body 里），合并口径与 fridaTabGET
+// 一致；body 先用本地播放通道同形的 PlaybackBody（biz_param 三
+// 字段），空响应时再换官方 GetVideoBizParam 的完整 12 字段形状
+// 重试一次（服务方客户端 2026-11-24 对齐的保险形状）。
+func (c *Client) fridaPlayerPOST(ctx context.Context, prof *fridaServiceProfile, origin, episodeID string) (raw []byte, signFailed bool, err error) {
+	bodies := make([][]byte, 0, 2)
+	if b, berr := protocol.PlaybackBody(episodeID); berr == nil {
+		bodies = append(bodies, b)
+	}
+	if b, berr := fridaFullBizBody(episodeID); berr == nil {
+		bodies = append(bodies, b)
+	}
+	for i, body := range bodies {
+		raw, signFailed, err = c.fridaPlayerPOSTOnce(ctx, prof, origin, episodeID, body)
+		if signFailed || err != nil {
+			return raw, signFailed, err
+		}
+		if len(bytes.TrimSpace(raw)) > 0 || i == len(bodies)-1 {
+			return raw, false, nil
+		}
+	}
+	return nil, false, nil
+}
+
+func (c *Client) fridaPlayerPOSTOnce(ctx context.Context, prof *fridaServiceProfile, origin, episodeID string, body []byte) (raw []byte, signFailed bool, err error) {
+	ticket := c.clock().UnixMilli()
+	pairs := make([][2]string, 0, len(fridaIdentityKeys)+2)
+	for _, k := range fridaIdentityKeys {
+		if v, ok := prof.params[k]; ok {
+			pairs = append(pairs, [2]string{k, v})
+		}
+	}
+	pairs = append(pairs,
+		[2]string{"ts", strconv.FormatInt(ticket/1000, 10)},
+		[2]string{"_rticket", strconv.FormatInt(ticket, 10)})
+	fullURL := origin + protocol.PathPlayback + "?" + encodeRemoteQuery(pairs)
+	sigs, err := c.fridaSignBody(ctx, fullURL, body)
+	if err != nil {
+		return nil, true, err
+	}
+	headers := map[string]string{
+		"Accept":                    "application/json; charset=utf-8,application/x-protobuf",
+		"Content-Type":              "application/json; charset=utf-8",
+		"User-Agent":                prof.userAgent,
+		"x-xs-from-web":             "0",
+		"x-ss-req-ticket":           strconv.FormatInt(ticket, 10),
+		"x-tt-request-tag":          "t=0;n=0",
+		"sdk-version":               "2",
+		"passport-sdk-version":      "50561",
+		"x-vc-bdturing-sdk-version": "3.7.2.cn",
+	}
+	for k, v := range sigs {
+		headers[k] = v
+	}
+	raw, _, err = c.doRaw(ctx, "POST", fullURL, headers, body)
+	if err != nil {
+		return nil, false, err
+	}
+	return raw, false, nil
+}
+
+// fridaFullBizBody 是官方 GetVideoBizParam 的完整形状（服务方客户端
+// 2026-11-24 从反编译对齐）：POST 播放路由的 biz_param 共 12 字段，
+// video_platform 取 3（GET 路由取 1024），明文 JSON 不压缩。
+func fridaFullBizBody(episodeID string) ([]byte, error) {
+	return json.Marshal(map[string]any{
+		"video_id": episodeID,
+		"biz_param": map[string]any{
+			"detail_page_version":       0,
+			"device_level":              1,
+			"disable_digg_stat":         false,
+			"disable_video_relate_book": false,
+			"from_video_id":             "",
+			"need_all_video_definition": true,
+			"need_mp4_align":            false,
+			"use_os_player":             false,
+			"use_server_dns":            false,
+			"video_id_type":             0,
+			"video_platform":            3,
+			"source":                    0,
+		},
+	})
 }
 
 // fridaTabGET 组装并发出一次 frida 签名的 video_tab GET。signFailed
@@ -499,6 +612,21 @@ func (c *Client) fridaTabGET(ctx context.Context, prof *fridaServiceProfile, ful
 // 六个签名头平铺在响应顶层返回。
 func (c *Client) fridaSign(ctx context.Context, fullURL string) (map[string]string, error) {
 	payload, _ := json.Marshal(map[string]string{"url": fullURL})
+	root, err := c.signerServiceJSON(ctx, "POST", fridaSignerEndpoint+"/sign", payload, "远程计算-frida")
+	if err != nil {
+		return nil, err
+	}
+	return extractSignatureHeaders(root, "远程计算-frida")
+}
+
+// fridaSignBody 是 fridaSign 的带 body 版：请求多带
+// {"body_base64": 请求体的 base64}，供 POST 播放路由签名（服务需在
+// /info 里声明 supportsBodySigning，调用方已把关）。
+func (c *Client) fridaSignBody(ctx context.Context, fullURL string, body []byte) (map[string]string, error) {
+	payload, _ := json.Marshal(map[string]string{
+		"url":         fullURL,
+		"body_base64": base64.StdEncoding.EncodeToString(body),
+	})
 	root, err := c.signerServiceJSON(ctx, "POST", fridaSignerEndpoint+"/sign", payload, "远程计算-frida")
 	if err != nil {
 		return nil, err
