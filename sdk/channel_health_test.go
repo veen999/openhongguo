@@ -18,16 +18,16 @@ var healthT0 = time.Unix(1_700_000_000, 0)
 
 func TestChannelHealthMarkDownAndSkip(t *testing.T) {
 	h := &channelHealth{}
-	if p := h.plan(healthT0); !p.attempt(channelV5) || p.allDown || p.preferred != "" {
+	if p := h.plan(healthT0); !p.attempt(channelPlayerV1) || p.allDown || p.preferred != "" {
 		t.Fatalf("fresh plan = %+v, want all attemptable, no preferred", p)
 	}
-	h.recordEmpty(channelV5, healthT0)
-	if !h.isDown(channelV5, healthT0) {
-		t.Fatal("v5 should be down right after an empty result")
+	h.recordEmpty(channelPlayerV1, healthT0)
+	if !h.isDown(channelPlayerV1, healthT0) {
+		t.Fatal("playerv1 should be down right after an empty result")
 	}
 	p := h.plan(healthT0)
-	if p.attempt(channelV5) {
-		t.Fatal("plan should skip the downed v5 channel")
+	if p.attempt(channelPlayerV1) {
+		t.Fatal("plan should skip the downed playerv1 channel")
 	}
 	if !p.attempt(channelTabMulti) || !p.attempt(channelPlayer) {
 		t.Fatal("plan should still attempt healthy channels")
@@ -36,24 +36,24 @@ func TestChannelHealthMarkDownAndSkip(t *testing.T) {
 		t.Fatal("allDown must be false while any channel is healthy")
 	}
 	// 连续空发放计数累加。
-	h.recordEmpty(channelV5, healthT0)
-	if got := h.states[channelV5].consecEmpty; got != 2 {
+	h.recordEmpty(channelPlayerV1, healthT0)
+	if got := h.states[channelPlayerV1].consecEmpty; got != 2 {
 		t.Fatalf("consecEmpty = %d, want 2", got)
 	}
 }
 
 func TestChannelHealthDownExpires(t *testing.T) {
 	h := &channelHealth{}
-	h.recordEmpty(channelV5, healthT0)
-	if !h.isDown(channelV5, healthT0.Add(channelDownDuration-time.Second)) {
-		t.Fatal("v5 should still be down inside the window")
+	h.recordEmpty(channelPlayerV1, healthT0)
+	if !h.isDown(channelPlayerV1, healthT0.Add(channelDownDuration-time.Second)) {
+		t.Fatal("playerv1 should still be down inside the window")
 	}
-	if h.isDown(channelV5, healthT0.Add(channelDownDuration+time.Second)) {
-		t.Fatal("v5 should recover after the down window")
+	if h.isDown(channelPlayerV1, healthT0.Add(channelDownDuration+time.Second)) {
+		t.Fatal("playerv1 should recover after the down window")
 	}
 	p := h.plan(healthT0.Add(channelDownDuration + time.Second))
-	if !p.attempt(channelV5) {
-		t.Fatal("plan should attempt v5 again after the window")
+	if !p.attempt(channelPlayerV1) {
+		t.Fatal("plan should attempt playerv1 again after the window")
 	}
 }
 
@@ -79,17 +79,17 @@ func TestChannelHealthSuccessClearsDownAndPromotes(t *testing.T) {
 func TestChannelHealthPreferredMovesAndDownPreferredHidden(t *testing.T) {
 	h := &channelHealth{}
 	h.recordSuccess(channelTabMulti, healthT0)
-	h.recordSuccess(channelV5, healthT0.Add(time.Second))
-	if p := h.plan(healthT0.Add(time.Second)); p.preferred != channelV5 {
-		t.Fatalf("preferred = %q, want latest success %q", p.preferred, channelV5)
+	h.recordSuccess(channelPlayerV1, healthT0.Add(time.Second))
+	if p := h.plan(healthT0.Add(time.Second)); p.preferred != channelPlayerV1 {
+		t.Fatalf("preferred = %q, want latest success %q", p.preferred, channelPlayerV1)
 	}
 	// 首选通道空发放后：计划不再把它当首选，且跳过它。
-	h.recordEmpty(channelV5, healthT0.Add(2*time.Second))
+	h.recordEmpty(channelPlayerV1, healthT0.Add(2*time.Second))
 	p := h.plan(healthT0.Add(2 * time.Second))
 	if p.preferred != "" {
 		t.Fatalf("preferred = %q, want none while the preferred channel is down", p.preferred)
 	}
-	if p.attempt(channelV5) {
+	if p.attempt(channelPlayerV1) {
 		t.Fatal("downed ex-preferred channel should be skipped")
 	}
 	if !p.attempt(channelTabMulti) {
@@ -129,7 +129,7 @@ func TestChannelHealthBatchChannelIsSeparate(t *testing.T) {
 	}
 	// 批量通道的 down 不影响单集链计划。
 	p := h.plan(healthT0)
-	if !p.attempt(channelV5) || p.allDown {
+	if !p.attempt(channelPlayerV1) || p.allDown {
 		t.Fatalf("single-chain plan affected by batch health: %+v", p)
 	}
 	// 批量成功也不得占据单集链的首选位。
@@ -179,8 +179,8 @@ func TestNoteChannelOutcomeClassification(t *testing.T) {
 	// 一般解析错误都算。
 	for _, err := range []error{ErrAnonymousLimited, errors.New("no entry for episode")} {
 		c := healthTestClient()
-		c.noteChannelOutcome(ctx, channelV5, nil, err)
-		if !c.channels.isDown(channelV5, healthT0) {
+		c.noteChannelOutcome(ctx, channelPlayerV1, nil, err)
+		if !c.channels.isDown(channelPlayerV1, healthT0) {
 			t.Fatalf("err %v should mark v5 down", err)
 		}
 	}
@@ -200,11 +200,11 @@ func TestNoteChannelOutcomeClassification(t *testing.T) {
 		{"wrapped device rejected", ctx, fmt.Errorf("read: %w", ErrDeviceRejected)},
 	} {
 		c := healthTestClient()
-		c.noteChannelOutcome(tc.ctx, channelV5, nil, tc.err)
-		if c.channels.isDown(channelV5, healthT0) {
+		c.noteChannelOutcome(tc.ctx, channelPlayerV1, nil, tc.err)
+		if c.channels.isDown(channelPlayerV1, healthT0) {
 			t.Fatalf("%s: v5 must not be marked down", tc.name)
 		}
-		if p := c.channels.plan(healthT0); !p.attempt(channelV5) {
+		if p := c.channels.plan(healthT0); !p.attempt(channelPlayerV1) {
 			t.Fatalf("%s: plan should still attempt v5", tc.name)
 		}
 	}

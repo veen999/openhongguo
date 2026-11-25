@@ -37,12 +37,9 @@ func (c *Client) ProbePlaybackChannels(ctx context.Context) map[string]bool {
 		mu.Unlock()
 	}
 	if p, err := c.playbackIdentity(ctx); err == nil {
-		wg.Add(7)
+		wg.Add(5)
 		go run(channelVideoModelV5, func() (*model.Playback, error) {
 			return c.resolvePlaybackViaVideoModelV5(ctx, p, probeEpisodeID)
-		})
-		go run(channelV5, func() (*model.Playback, error) {
-			return c.resolvePlaybackViaMobileV5(ctx, p, probeEpisodeID)
 		})
 		go run(channelPlayerV1, func() (*model.Playback, error) {
 			return c.resolvePlaybackViaPlayerV1(ctx, p, probeEpisodeID)
@@ -55,14 +52,6 @@ func (c *Client) ProbePlaybackChannels(ctx context.Context) map[string]bool {
 		})
 		go run(channelMulti, func() (*model.Playback, error) {
 			return c.resolvePlaybackViaMultiPlayer(ctx, p, probeEpisodeID)
-		})
-		go run(channelV5Batch, func() (*model.Playback, error) {
-			raw, err := c.resolveBatchV5Raw(ctx, p, []string{probeEpisodeID})
-			if err != nil {
-				return nil, err
-			}
-			pb, _ := finishMobileV5Playback(raw, probeEpisodeID)
-			return pb, nil
 		})
 	}
 	wg.Add(2)

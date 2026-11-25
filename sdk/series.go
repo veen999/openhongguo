@@ -84,6 +84,42 @@ func (c *Client) GetSeriesBatch(ctx context.Context, seriesIDs []string) ([]mode
 	})
 }
 
+// GetSeriesDetailV1 加载单部短剧的全量详情（multi_video_detail
+// 无场景段版式）：返回结构与 GetSeriesBatch 的单条一致（同一解
+// 析器），但一次只查一部、响应含 video_relate_book 全量字段。
+// 详情页优先走它；端点或签名形状被平台调整时调用方回退
+// GetSeriesBatch 的 /player/ 版式。
+func (c *Client) GetSeriesDetailV1(ctx context.Context, seriesID string) (*model.SeriesDetail, error) {
+	return withFreshDevice(ctx, c, false, func(ctx context.Context) (*model.SeriesDetail, error) {
+		if !validID(seriesID) {
+			return nil, fmt.Errorf("invalid series ID %q", seriesID)
+		}
+		body, err := protocol.SeriesDetailV1Body(seriesID)
+		if err != nil {
+			return nil, err
+		}
+		p, err := c.ensureSearchGuest(ctx)
+		if err != nil {
+			return nil, err
+		}
+		ticket := c.clock().UnixMilli()
+		rawQuery, headers := sign.SignPOST(protocol.PathSeriesDetailV1, protocol.DeviceQueryPairs(c.identity(p)), ticket, p.DeviceID, protocol.VersionName, body, nil)
+		raw, _, err := c.doRaw(ctx, "POST", c.apiOrigin+protocol.PathSeriesDetailV1+"?"+rawQuery, anonymousHeaders(c, p, ticket, headers), body)
+		if err != nil {
+			return nil, err
+		}
+		got, err := protocol.ParseSeriesBatch(raw)
+		if err != nil {
+			return nil, err
+		}
+		d, ok := got[seriesID]
+		if !ok {
+			return nil, ErrContentUnavailable
+		}
+		return &d, nil
+	})
+}
+
 // ListEpisodes 加载一部短剧的分集列表。集数从 1 开始。
 func (c *Client) ListEpisodes(ctx context.Context, seriesID string, opts EpisodeOptions) (*Page[model.Episode], error) {
 	return withFreshDevice(ctx, c, false, func(ctx context.Context) (*Page[model.Episode], error) {

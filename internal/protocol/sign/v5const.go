@@ -1,5 +1,17 @@
 package sign
 
+// 签名家族图谱（2026-11-25 收敛，探针实证）：
+//   - 目录/通用家族（0x35 封装，const.go + medusa.go）：reading/bookapi
+//     的 GET/POST，Gorgon 4001 变体。现行可用，不动。
+//   - 播放 POST 家族（0xca 封装）按端点分两形，不可互换：
+//     · video_model/v1 → 稀疏形（v5.go SignPlaybackV5Sparse，本文件
+//       v04.10.03 常量组，field21=312）——2026-11-25 REV9 实证。
+//     · multi_video_model 家族 → InPlace 形（v5.go
+//       SignPlaybackV5InPlace，同为 v04.10.03 表）——现行生产实证；
+//       稀疏形与模板形在该家族均被拒（同日探针）。
+//   - v04.06.04 组（playback_v5_constants.go）本地发放已退役，仅为
+//     unidbg 远程重签保留请求形状，见该文件头注。
+
 // v5 (official client v04.10.03) medusa constants, as published by the
 // hongguo-open-player 0.1.32 fix and its hongguoTV port (2026-11-16/17).
 

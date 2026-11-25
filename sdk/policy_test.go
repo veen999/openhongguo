@@ -23,7 +23,7 @@ const tabModelJSON = `{"code":0,"data":{"video_model":{"status":10,"video_id":"7
 
 type policyFake struct {
 	serveV5 atomic.Bool
-	// recoverAt（UnixNano）非 0 时，本地 v5 在该时刻后开始发模型，
+	// recoverAt（UnixNano）非 0 时，本地通道在该时刻后开始发模型，
 	// 模拟试用期结束、通道随身份存活恢复。
 	recoverAt atomic.Int64
 }
@@ -48,9 +48,12 @@ func (f *policyFake) handler(req *Request) (*Response, error) {
 		return &Response{StatusCode: 200, Headers: map[string]string{},
 			Body: []byte(`{"headers":` + sixHeadersJSON + `}`)}, nil
 	case strings.Contains(url, "multi_video_model/v1"):
-		// 服务重签后的 v5 请求带占位 medusa（"m"）：对其发模型，模拟
+		// 服务重签后的请求带占位 medusa（"m"）：对其发模型，模拟
 		// 本地签名被平台拒发、远程签名可发的情形；serveV5 置位则模拟
-		// 本地通道恢复，本地签名的请求也发模型。
+		// 本地通道恢复，本地签名的请求也发模型。发模型用 data.video_model
+		// 信封（drm-playback.json）：该路径现由 tab 多集与 multi 通道
+		// 共用，两者的解析器都吃这一形（v5 通道已于 2026-11-25 退役
+		// 出链，其 1004 分桶信封不再经此路径下发）。
 		medusa := ""
 		for k, v := range req.Headers {
 			if strings.EqualFold(k, "x-medusa") {
@@ -58,7 +61,7 @@ func (f *policyFake) handler(req *Request) (*Response, error) {
 			}
 		}
 		if f.serveV5.Load() || medusa == "m" || (f.recoverAt.Load() != 0 && time.Now().UnixNano() > f.recoverAt.Load()) {
-			raw, err := os.ReadFile(filepath.Join("..", "testdata", "protocol", "drm-playback-v5.json"))
+			raw, err := os.ReadFile(filepath.Join("..", "testdata", "protocol", "drm-playback.json"))
 			if err != nil {
 				return nil, err
 			}

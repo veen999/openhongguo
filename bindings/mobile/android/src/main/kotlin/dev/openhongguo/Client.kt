@@ -49,6 +49,24 @@ data class SigningModeProbe(
     val errorKind: String = "",
 )
 
+/** ConfigSnapshot 是上游 AB 配置的一次拉取结果（平台开关面）。 */
+data class ConfigSnapshot(
+    /** 拉取时刻（Unix 毫秒）。 */
+    val fetchedAt: Long,
+    /** 是否至少拉到了 ab_result。 */
+    val ok: Boolean,
+    /** video_tab 总开关。 */
+    val videoTab: Boolean,
+    /** 播放路径实验 dr_scene 是否命中（enable=true）。 */
+    val drSceneEnabled: Boolean,
+    /** 当前生效播放路径标签："V1" 或 "V2 · dr_scene"。 */
+    val playbackPath: String,
+    /** continue_watch 分组 ab_type；未拉到为 -1。 */
+    val continueWatchType: Int,
+    /** 个人化开关。 */
+    val personalSwitch: Boolean,
+)
+
 /** BatchPlaybackResult 是 resolvePlaybackBatch 的结果。 */
 data class BatchPlaybackResult(
     /** 成功解析的集，按 episodeId 索引。 */
@@ -171,6 +189,18 @@ class OpenhongguoClient internal constructor(private val engine: Engine) {
     suspend fun getSeriesBatch(seriesIds: List<String>): List<SeriesDetail> =
         call("getSeriesBatch", JSONArray(seriesIds)).asList { SeriesDetail.fromJson(it.asObject()) }
 
+    /** 单部短剧全量详情（multi_video_detail 无场景段版式）：结构与 getSeriesBatch 单条一致，含原著小说全量字段；失败时调用方回退 getSeriesBatch。 */
+    suspend fun getSeriesDetailV1(seriesId: String): SeriesDetail =
+        SeriesDetail.fromJson(call("getSeriesDetailV1", seriesId).asObject())
+
+    /** 小说关联的改编短剧列表（小说→短剧）；无改编时返回空列表。 */
+    suspend fun relatedVideo(bookId: String): List<RelatedVideo> =
+        call("relatedVideo", bookId).asList { RelatedVideo.fromJson(it.asObject()) }
+
+    /** 小说的改编短剧（小说页「相关短剧」区）：端点直读优先，匿名恒空时走搜索反查核对。 */
+    suspend fun relatedDramas(bookId: String): List<RelatedVideo> =
+        call("relatedDramas", bookId).asList { RelatedVideo.fromJson(it.asObject()) }
+
     /** 一部剧的分集列表。 */
     suspend fun listEpisodes(seriesId: String, options: EpisodeOptions = EpisodeOptions()): Page<Episode> =
         page(call("listEpisodes", seriesId, options.toJson()), Episode::fromJson)
@@ -278,6 +308,20 @@ class OpenhongguoClient internal constructor(private val engine: Engine) {
             latencyMs = o.optLong("latencyMs"),
             maxDefinition = o.optString("maxDefinition", ""),
             errorKind = o.optString("errorKind", ""),
+        )
+    }
+
+    /** 拉取上游 AB 配置快照：平台开关（video_tab / dr_scene 等）随即在 SDK 内生效（dr_scene 决定播放路径），快照供界面展示。 */
+    suspend fun configSnapshot(): ConfigSnapshot {
+        val o = call("configSnapshot").asObject()
+        return ConfigSnapshot(
+            fetchedAt = o.optLong("fetchedAt"),
+            ok = o.optBoolean("ok"),
+            videoTab = o.optBoolean("videoTab"),
+            drSceneEnabled = o.optBoolean("drSceneEnabled"),
+            playbackPath = o.optString("playbackPath", "V1"),
+            continueWatchType = o.optInt("continueWatchType", -1),
+            personalSwitch = o.optBoolean("personalSwitch"),
         )
     }
 

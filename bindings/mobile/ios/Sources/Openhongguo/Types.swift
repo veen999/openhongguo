@@ -1481,6 +1481,39 @@ public struct Recommend: Codable, Hashable, Sendable {
     }
 }
 
+/// RelatedVideo 是小说关联的一部改编短剧（related_video 的
+/// related_video_version_list 一条）：VideoVersionID 是短剧侧的
+/// series_id，可直接进短剧详情；SubTitle 是副标题行（如集数/
+/// 播放量文案），服务端给出时才有。
+public struct RelatedVideo: Codable, Hashable, Sendable {
+    public var videoVersionId: String
+    public var title: String
+    public var cover: String
+    public var subTitle: String
+
+    public init(videoVersionId: String = "", title: String = "", cover: String = "", subTitle: String = "") {
+        self.videoVersionId = videoVersionId
+        self.title = title
+        self.cover = cover
+        self.subTitle = subTitle
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case videoVersionId = "video_version_id"
+        case title
+        case cover
+        case subTitle = "sub_title"
+    }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        self.videoVersionId = try c.decodeIfPresent(String.self, forKey: .videoVersionId) ?? ""
+        self.title = try c.decodeIfPresent(String.self, forKey: .title) ?? ""
+        self.cover = try c.decodeIfPresent(String.self, forKey: .cover) ?? ""
+        self.subTitle = try c.decodeIfPresent(String.self, forKey: .subTitle) ?? ""
+    }
+}
+
 /// Season 是合集（多季合集）中的一项。
 public struct Season: Codable, Hashable, Sendable {
     public var seriesId: String

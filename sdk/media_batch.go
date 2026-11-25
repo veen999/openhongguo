@@ -63,6 +63,11 @@ func (c *Client) ResolvePlaybackBatch(ctx context.Context, ids []string) (map[st
 		switch {
 		case idErr != nil:
 			missing = chunk
+		case c.effectiveSigningMode() == SigningModeLocal:
+			// 本地计算：v5 批量端点已退役（2026-11-25 探针：两种签名
+			// 形状皆空返），整块直接走单集链。unidbg 方式仍走批量
+			// POST——传输层重签后由远程发放，不在此列。
+			missing = chunk
 		case c.channels.isDown(channelV5Batch, c.clock()):
 			// 批量通道已知不发放：不再白付一次死 POST，整块直接走
 			// 单集链（链本身按健康计划首选活通道）。

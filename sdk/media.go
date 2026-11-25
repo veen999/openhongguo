@@ -153,14 +153,13 @@ func (c *Client) resolvePlaybackChain(ctx context.Context, episodeID string, mod
 		// 的 player/multi 之后白等。
 		head := []identityChannel{
 			{channelVideoModelV5, c.resolvePlaybackViaVideoModelV5},
-			{channelV5, c.resolvePlaybackViaMobileV5},
 			{channelPlayerV1, c.resolvePlaybackViaPlayerV1},
 			{channelTabMulti, c.resolvePlaybackViaTabMulti},
 		}
 		if plan.preferred == channelTabMulti {
-			head[0], head[1], head[2], head[3] = head[3], head[0], head[1], head[2]
+			head[0], head[1], head[2] = head[2], head[0], head[1]
 		}
-		if plan.attempt(channelVideoModelV5) || plan.attempt(channelV5) || plan.attempt(channelPlayerV1) || plan.attempt(channelTabMulti) {
+		if plan.attempt(channelVideoModelV5) || plan.attempt(channelPlayerV1) || plan.attempt(channelTabMulti) {
 			if pb, err := c.playbackIdentity(ctx); err == nil {
 				for _, ch := range head {
 					if playback, err := c.tryPlaybackChannel(ctx, plan, ch.name, func() (*model.Playback, error) {
@@ -494,7 +493,13 @@ func (c *Client) resolvePlaybackViaMultiPlayer(ctx context.Context, p *DevicePro
 // Same signing and identity as the V1 multi channel; the scene rides
 // in the path and in the body's dr_scene.
 func (c *Client) resolvePlaybackViaMultiPlayerV2(ctx context.Context, p *DeviceProfile, episodeID string) (*model.Playback, error) {
-	const scene = "default"
+	// 场景段由上游 AB 配置驱动（video_player_api_dr_scene）：
+	// 命中实验走 dr_scene 场景，未命中维持 default——与官方客户
+	// 端读取点语义一致（键缺失 = 默认 enable:false）。
+	scene := "default"
+	if c.drSceneEnabled() {
+		scene = "dr_scene"
+	}
 	body, err := protocol.MultiPlaybackBodyV2(episodeID, scene)
 	if err != nil {
 		return nil, err

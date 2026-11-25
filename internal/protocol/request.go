@@ -804,6 +804,21 @@ func SeriesBatchBody(seriesIDs []string) ([]byte, error) {
 	})
 }
 
+// SeriesDetailV1Body 是 multi_video_detail/v1 的请求体（单剧）：
+// biz_param 只带取全量详情必需的三键，content_type=1（2026-11-25
+// 探针实证出全量详情 1MB+，含 video_detail 与 video_relate_book）。
+func SeriesDetailV1Body(seriesID string) ([]byte, error) {
+	return jsonMarshal(map[string]any{
+		"biz_param": map[string]any{
+			"video_platform":            1024,
+			"use_os_player":             false,
+			"need_all_video_definition": true,
+		},
+		"series_id":    seriesID,
+		"content_type": 1,
+	})
+}
+
 // PlaybackBody is the JSON body for video_model. The response is classified, not decrypted.
 // AlbumBody is the anonymous album (multi-season) request.
 // The shipped request class is GetVideoAlbumDetailRequest with albumId,

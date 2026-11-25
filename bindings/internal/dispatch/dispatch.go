@@ -122,6 +122,27 @@ var methods = map[string]method{
 		return c.Upcoming(ctx, cursor)
 	},
 	"getSeries": oneString(func(ctx context.Context, c *sdk.Client, id string) (any, error) { return c.GetSeries(ctx, id) }),
+	"getSeriesDetailV1": func(ctx context.Context, c *sdk.Client, a []json.RawMessage) (any, error) {
+		var id string
+		if err := arg(a, 0, &id); err != nil {
+			return nil, err
+		}
+		return c.GetSeriesDetailV1(ctx, id)
+	},
+	"relatedVideo": func(ctx context.Context, c *sdk.Client, a []json.RawMessage) (any, error) {
+		var id string
+		if err := arg(a, 0, &id); err != nil {
+			return nil, err
+		}
+		return c.RelatedVideo(ctx, id)
+	},
+	"relatedDramas": func(ctx context.Context, c *sdk.Client, a []json.RawMessage) (any, error) {
+		var id string
+		if err := arg(a, 0, &id); err != nil {
+			return nil, err
+		}
+		return c.RelatedDramas(ctx, id)
+	},
 	"getSeriesBatch": func(ctx context.Context, c *sdk.Client, a []json.RawMessage) (any, error) {
 		var ids []string
 		if err := arg(a, 0, &ids); err != nil {
@@ -285,6 +306,9 @@ var methods = map[string]method{
 	},
 	"probePlaybackChannels": func(ctx context.Context, c *sdk.Client, a []json.RawMessage) (any, error) {
 		return c.ProbePlaybackChannels(ctx), nil
+	},
+	"configSnapshot": func(ctx context.Context, c *sdk.Client, a []json.RawMessage) (any, error) {
+		return c.FetchConfigSnapshot(ctx)
 	},
 	"probeSigningMode": func(ctx context.Context, c *sdk.Client, a []json.RawMessage) (any, error) {
 		var mode string

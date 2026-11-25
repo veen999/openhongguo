@@ -29,6 +29,17 @@ type ToneInfo struct {
 	Tones []ToneEntry `json:"tones,omitempty"`
 }
 
+// RelatedVideo 是小说关联的一部改编短剧（related_video 的
+// related_video_version_list 一条）：VideoVersionID 是短剧侧的
+// series_id，可直接进短剧详情；SubTitle 是副标题行（如集数/
+// 播放量文案），服务端给出时才有。
+type RelatedVideo struct {
+	VideoVersionID string `json:"video_version_id"`
+	Title          string `json:"title"`
+	Cover          string `json:"cover,omitempty"`
+	SubTitle       string `json:"sub_title,omitempty"`
+}
+
 // ToneEntry 是音色表里的一条可选音色。
 type ToneEntry struct {
 	// ID 是 TTS 音色 id（>0）；真人主播条目为 0。

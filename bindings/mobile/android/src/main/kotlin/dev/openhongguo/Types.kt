@@ -1336,6 +1336,37 @@ data class Recommend(
     }
 }
 
+/**
+ * RelatedVideo 是小说关联的一部改编短剧（related_video 的
+ * related_video_version_list 一条）：VideoVersionID 是短剧侧的
+ * series_id，可直接进短剧详情；SubTitle 是副标题行（如集数/
+ * 播放量文案），服务端给出时才有。
+ */
+data class RelatedVideo(
+    val videoVersionId: String = "",
+    val title: String = "",
+    val cover: String = "",
+    val subTitle: String = "",
+) {
+    /** 编码成与 Go SDK 相同的 JSON。 */
+    fun toJson(): JSONObject = JSONObject().apply {
+        put("video_version_id", videoVersionId)
+        put("title", title)
+        put("cover", cover)
+        put("sub_title", subTitle)
+    }
+
+    companion object {
+        /** 从 Go SDK 输出的 JSON 解码；缺省的字段取零值。 */
+        fun fromJson(o: JSONObject): RelatedVideo = RelatedVideo(
+            videoVersionId = o.opt("video_version_id").asString(),
+            title = o.opt("title").asString(),
+            cover = o.opt("cover").asString(),
+            subTitle = o.opt("sub_title").asString(),
+        )
+    }
+}
+
 /** Season 是合集（多季合集）中的一项。 */
 data class Season(
     val seriesId: String = "",

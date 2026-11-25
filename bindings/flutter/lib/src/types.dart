@@ -1555,6 +1555,40 @@ class Recommend {
       };
 }
 
+/// RelatedVideo 是小说关联的一部改编短剧（related_video 的
+/// related_video_version_list 一条）：VideoVersionID 是短剧侧的
+/// series_id，可直接进短剧详情；SubTitle 是副标题行（如集数/
+/// 播放量文案），服务端给出时才有。
+class RelatedVideo {
+  final String videoVersionId;
+  final String title;
+  final String cover;
+  final String subTitle;
+
+  const RelatedVideo({
+    this.videoVersionId = '',
+    this.title = '',
+    this.cover = '',
+    this.subTitle = '',
+  });
+
+  /// 从 Go SDK 输出的 JSON 解码；缺省的字段取零值。
+  factory RelatedVideo.fromJson(Map<String, dynamic> j) => RelatedVideo(
+        videoVersionId: _asString(j['video_version_id']),
+        title: _asString(j['title']),
+        cover: _asString(j['cover']),
+        subTitle: _asString(j['sub_title']),
+      );
+
+  /// 编码成与 Go SDK 相同的 JSON。
+  Map<String, dynamic> toJson() => {
+        'video_version_id': videoVersionId,
+        'title': title,
+        'cover': cover,
+        'sub_title': subTitle,
+      };
+}
+
 /// Season 是合集（多季合集）中的一项。
 class Season {
   final String seriesId;

@@ -3332,3 +3332,49 @@ func dedupeStrings(in []string) []string {
 	}
 	return out
 }
+
+// ParseRelatedVideo 解析 related_video 响应：data.related_video_
+// version_list 是改编短剧版本列表（cover/title/video_version_id/
+// sub_title_list）。列表为空（该小说暂无改编或参数未命中）时返
+// 回空切片而非错误——调用方据此决定是否展示「相关短剧」区。
+func ParseRelatedVideo(raw []byte) ([]model.RelatedVideo, error) {
+	var env struct {
+		Code int `json:"code"`
+		Data struct {
+			VersionList []struct {
+				Cover          string `json:"cover"`
+				Title          string `json:"title"`
+				VideoVersionID string `json:"video_version_id"`
+				SubTitleList   []subTitleItem `json:"sub_title_list"`
+			} `json:"related_video_version_list"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(raw, &env); err != nil {
+		return nil, err
+	}
+	if env.Code != 0 {
+		return nil, fmt.Errorf("related video: code %d", env.Code)
+	}
+	out := make([]model.RelatedVideo, 0, len(env.Data.VersionList))
+	for _, v := range env.Data.VersionList {
+		if v.VideoVersionID == "" {
+			continue
+		}
+		sub := ""
+		for _, st := range v.SubTitleList {
+			if st.Content != "" {
+				if sub != "" {
+					sub += " · "
+				}
+				sub += st.Content
+			}
+		}
+		out = append(out, model.RelatedVideo{
+			VideoVersionID: v.VideoVersionID,
+			Title:          v.Title,
+			Cover:          v.Cover,
+			SubTitle:       sub,
+		})
+	}
+	return out, nil
+}

@@ -58,6 +58,10 @@ type Client struct {
 	resetter     deviceResetter
 	// contentKeyMu 保护 contentKeys：小说正文的内容键按设备 id 缓存，
 	// 设备轮换后旧键自动失效（键与注册时的设备绑定）。
+	// configMu 保护 configSnap：最近一次上游 AB 配置快照
+	// （见 config.go），dr_scene 开关据此选路。
+	configMu   sync.Mutex
+	configSnap   *ConfigSnapshot
 	contentKeyMu sync.Mutex
 	contentKeys  map[string]string
 	// audioToneMu 保护 audioToneLists：一本书未指定音色时的候选音色

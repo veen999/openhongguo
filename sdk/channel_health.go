@@ -39,7 +39,7 @@ const (
 // resolveChannelOrder 是单集取址链里通道的经典顺序（健康计划的基准
 // 序与全 down 时的回退序）。
 var resolveChannelOrder = []string{
-	channelVideoModelV5, channelV5, channelPlayerV1, channelTabMulti, channelPlayer, channelMultiV2, channelMulti, channelTab,
+	channelVideoModelV5, channelPlayerV1, channelTabMulti, channelPlayer, channelMultiV2, channelMulti, channelTab,
 }
 
 type channelState struct {

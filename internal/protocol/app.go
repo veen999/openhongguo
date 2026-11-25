@@ -38,7 +38,23 @@ const (
 	// PathSeriesBatch is the player's batch detail read (multi_video_detail,
 	// player scene; observed 2026-10-24).
 	PathSeriesBatch = "/novel/player/multi_video_detail/player/v1"
-	PathPlayback    = "/novel/player/video_model/v1/"
+	// PathSeriesDetailV1 是 multi_video_detail 的无场景段版式
+	// （2026-11-25 探针实证：全量详情含 video_relate_book，签名
+	// 家族与 /player/ 版同源）。详情页优先走它，失败回退批量版。
+	PathSeriesDetailV1 = "/novel/player/multi_video_detail/v1/"
+	// PathRelatedVideo 是小说侧「相关短剧」读取（reader 家族）：
+	// 给小说 book_id，返回改编短剧的版本列表（小说→短剧方向，
+	// 与详情页 video_relate_book 的短剧→小说方向互补）。
+	PathRelatedVideo = "/reading/reader/related_video/v1/"
+	// 上游 AB 配置面（2026-11-25 探针实证，匿名目录身份可拉）：
+	// ab_result 的 data 即开关表本体；continue_watch_ab 给续看
+	// 分组；ugc/ab/config 是另一配置源（默认组）；switch/info
+	// 给个人化开关。官方读取点见 sdk/config.go 文件头注。
+	PathABResult        = "/reading/bookapi/video_tab/ab_result/v1/"
+	PathContinueWatchAB = "/reading/bookapi/video_tab/continue_watch_ab/v1/"
+	PathUGCABConfig     = "/reading/ugc/ab/config/v1/"
+	PathSwitchInfo      = "/reading/user/switch/info"
+	PathPlayback        = "/novel/player/video_model/v1/"
 	// PathPlaybackMulti is the player channel's batch model read
 	// (seriessdk mGetVideoModel; one episode per call here). Since
 	// 2026-11-10 it is the player-side issuance path that still answers

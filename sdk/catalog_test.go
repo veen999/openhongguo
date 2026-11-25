@@ -75,6 +75,7 @@ func happyHandler(t *testing.T, seen *[]captured) http.Handler {
 		protocol.PathSeries:                                     "series-response.json",
 		protocol.PathPlayback:                                   "drm-playback.json",
 		protocol.PathPlaybackMulti:                              "drm-playback.json",
+		protocol.PathPlaybackMobileV5:                           "drm-playback-v5.json",
 		fmt.Sprintf(protocol.PathPlaybackMultiV2Fmt, "default"): "drm-playback.json",
 		protocol.PathVideoTabMulti:                              "drm-playback.json",
 		protocol.PathRegister:                                   "register-response.json",
@@ -456,6 +457,20 @@ func assertAnonymousWire(t *testing.T, seen []captured) {
 			}
 			if hit.Header.Get("x-gorgon") == "" || hit.Header.Get("x-ss-stub") == "" {
 				t.Fatal("series signature missing")
+			}
+		case protocol.PathPlaybackMobileV5:
+			played = true
+			// playerv1 通道：gzip 压缩体 + v04.10.03 InPlace 签名
+			// （medusa/khronos/helios 三件套 + stub，无 gorgon）。
+			if hit.Header.Get("Content-Encoding") != "gzip" {
+				t.Fatal("playerv1 body not gzipped")
+			}
+			if hit.Header.Get("x-medusa") == "" || hit.Header.Get("x-khronos") == "" || hit.Header.Get("x-helios") == "" || hit.Header.Get("x-ss-stub") == "" {
+				t.Fatal("playerv1 signature missing")
+			}
+			q, _ := url.ParseQuery(hit.RawQuery)
+			if q.Get("version_code") != protocol.PlaybackV041003VersionCode {
+				t.Fatalf("playerv1 version = %s", q.Get("version_code"))
 			}
 		case protocol.PathPlaybackMulti, fmt.Sprintf(protocol.PathPlaybackMultiV2Fmt, "default"):
 			played = true
