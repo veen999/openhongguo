@@ -113,23 +113,39 @@ func probeErrorKind(ctx context.Context, modeID int32, err error) string {
 }
 
 // maxDefinitionLabel 取模型里最高一档的画质标签，如 "1080P"。
+// 口径与接口自身的 definition 一致：标签数字是画面的短边——横屏取高、
+// 竖屏取宽（接口把 1080×1920 的一档标作 "1080p"，而非按高度的 1920）。
 func maxDefinitionLabel(pb *model.Playback) string {
 	best := 0
 	for _, s := range pb.Streams {
-		if s.Height > best {
-			best = s.Height
-		}
-	}
-	if best == 0 {
-		for _, s := range pb.Streams {
-			var h int
-			if _, err := fmt.Sscanf(s.Definition, "%dp", &h); err == nil && h > best {
-				best = h
-			}
+		if v := streamDefinitionValue(s); v > best {
+			best = v
 		}
 	}
 	if best == 0 {
 		return ""
 	}
 	return fmt.Sprintf("%dP", best)
+}
+
+// streamDefinitionValue 是单档流的画质数值：宽高齐全取短边，
+// 缺一取其一，再缺解析 definition 标签开头的数字（"1080p" → 1080）。
+func streamDefinitionValue(s model.Stream) int {
+	if s.Width > 0 && s.Height > 0 {
+		if s.Width < s.Height {
+			return s.Width
+		}
+		return s.Height
+	}
+	if s.Height > 0 {
+		return s.Height
+	}
+	if s.Width > 0 {
+		return s.Width
+	}
+	var h int
+	if _, err := fmt.Sscanf(s.Definition, "%dp", &h); err == nil {
+		return h
+	}
+	return 0
 }
