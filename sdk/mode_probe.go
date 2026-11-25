@@ -19,20 +19,22 @@ type SigningModeProbe struct {
 	ErrorKind     string `json:"errorKind,omitempty"`     // empty / timeout / unreachable / error
 }
 
-// ProbeSigningMode 检测一种计算方式当前是否可用：对固定探针剧集按
-// 该方式的真实播放口径完整取址一次。本地与 unidbg 跑完整取址链
-// （resolvePlaybackChain：全通道依次落空才算失败，含新鲜身份重试；
-// unidbg 期间临时把生效方式切到 unidbg 让传输层重签，测完立即恢复），
-// frida 走远程真机通道全程（tab GET 全灭后还有服务签名的 POST 播放
-// 路由兜底）。
+// ProbeSigningMode 快速检测一种计算方式「现在能不能取到流」：
+// 弹层检测只做快速实测，不做深度确认——深度确认（多通道复核、
+// 试用期复探）是后台判定缓存的活，不该让用户盯着弹层等（2026-11-25
+// 链路级口径下本地检测跑满 128 秒且确认按钮被检测锁死，用户实测
+// 痛斥后改为快速口径）。
 //
-// 旧实现只在当前身份上单发 tab 多集与 v5 两条通道，与真实播放口径
-// 不一致：新身份尚在平台试用期、或发放只开在播放器 POST 通道上时，
-// 单发全空但完整链磨过去能出流，检测却报失败（2026-11-25 用户实测
-// 弹层报本地/unidbg 失败、同环境完整链 5 档出流）。检测预算因此按
-// 链时长放宽：本地 180 秒、unidbg 90 秒、frida 60 秒。检测不改锚点、
-// 不触发策略层的自动切换确认；完整链在全灭时可能换一次播放身份，
-// 这是与真实播放一致的行为。
+//   - 本地：在当前播放身份上顺序单发 tab 多集与 v5 两条历史上会发
+//     放的通道，任一出模型即可用，预算 15 秒封顶。测到可用记
+//     「可用」判定；测不到不下「不可用」结论（可能只是试用期/通
+//     道轮换），只触发后台完整复核去定判定。
+//   - unidbg：临时把生效方式切到 unidbg 跑一遍取址链（传输层重
+//     签），测完恢复，预算 45 秒。
+//   - frida：走远程真机通道（tab GET 全灭后有服务签名的 POST 播
+//     放路由兜底），预算 45 秒。
+//
+// 检测不改锚点、不触发策略层的自动切换。
 func (c *Client) ProbeSigningMode(ctx context.Context, mode string) SigningModeProbe {
 	res := SigningModeProbe{Mode: "local"}
 	var modeID int32 = SigningModeLocal
@@ -42,12 +44,10 @@ func (c *Client) ProbeSigningMode(ctx context.Context, mode string) SigningModeP
 	case "frida":
 		modeID, res.Mode = SigningModeFrida, "frida"
 	}
-	budget := 180 * time.Second
+	budget := 15 * time.Second
 	switch modeID {
-	case SigningModeUnidbg:
-		budget = 90 * time.Second
-	case SigningModeFrida:
-		budget = 60 * time.Second
+	case SigningModeUnidbg, SigningModeFrida:
+		budget = 45 * time.Second
 	}
 	ctx, cancel := context.WithTimeout(ctx, budget)
 	defer cancel()
@@ -62,13 +62,17 @@ func (c *Client) ProbeSigningMode(ctx context.Context, mode string) SigningModeP
 		pb, err = c.resolvePlaybackChain(ctx, probeEpisodeID, SigningModeUnidbg)
 		c.effSignMode.Store(old)
 	default:
-		// 与 ResolvePlayback 的本地路径同口径：完整链全灭先经多通道
-		// 复核（含试用期同身份复探——沙箱实测单跑一遍链 13 秒全灭、
-		// 复核养过试用期后第二遍链即出 5 档），复核称可用才跑第二遍。
 		bypassCtx := withResignBypass(ctx)
-		pb, err = c.resolvePlaybackChain(bypassCtx, probeEpisodeID, SigningModeLocal)
-		if pb == nil && c.localChannelsAlive(bypassCtx, probeEpisodeID) {
-			pb, err = c.resolvePlaybackChain(bypassCtx, probeEpisodeID, SigningModeLocal)
+		var p *DeviceProfile
+		p, err = c.playbackIdentity(bypassCtx)
+		if err == nil {
+			if m, _ := c.resolvePlaybackViaTabMulti(bypassCtx, p, probeEpisodeID); m != nil {
+				c.noteChannelOutcome(bypassCtx, channelTabMulti, m, nil)
+				pb = m
+			} else if m, _ := c.resolvePlaybackViaMobileV5(bypassCtx, p, probeEpisodeID); m != nil {
+				c.noteChannelOutcome(bypassCtx, channelV5, m, nil)
+				pb = m
+			}
 		}
 	}
 	res.LatencyMs = c.clock().Sub(start).Milliseconds()
@@ -76,14 +80,14 @@ func (c *Client) ProbeSigningMode(ctx context.Context, mode string) SigningModeP
 		res.OK = true
 		res.MaxDefinition = maxDefinitionLabel(pb)
 		if modeID == SigningModeLocal {
-			// 链路级检测与播放同口径，结果直接喂判定缓存。
 			c.recordLocalVerdict(true)
 		}
 		return res
 	}
 	res.ErrorKind = probeErrorKind(ctx, modeID, err)
-	if modeID == SigningModeLocal && res.ErrorKind != "timeout" {
-		c.recordLocalVerdict(false)
+	if modeID == SigningModeLocal {
+		// 快速实测没取到不等于本地不可用：判定交给后台完整复核。
+		c.confirmLocalOrFlipAsync()
 	}
 	return res
 }
