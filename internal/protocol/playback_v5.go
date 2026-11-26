@@ -179,13 +179,24 @@ func PlaybackV5SparsePairs(deviceID, installID, cdid string) [][2]string {
 // gzip 后把同一份字节同时用于签名和发送。2026-11-25 实测：扁平
 // 体（无 biz_param）只回单档 720p，本形状回全 5 档。
 func PlaybackVideoModelBody(episodeID string) ([]byte, error) {
+	return PlaybackVideoModelBodyFor(episodeID, 1)
+}
+
+// PlaybackVideoModelBodyFor 是带 content_type 的版本：上游对部分类型
+// （PUGC 1001）要求请求 content_type 与单集真实类型一致，写死 1 会被
+// 回 101000「服务异常」（2026-11-26 实测《娇女诡爱畸恋》：ct=1 全灭、
+// ct=1001 五档全回）。contentType <= 0 时回落 1（真人短剧）。
+func PlaybackVideoModelBodyFor(episodeID string, contentType int) ([]byte, error) {
+	if contentType <= 0 {
+		contentType = 1
+	}
 	return jsonMarshal(map[string]any{
 		"biz_param": map[string]any{
 			"need_all_video_definition": true,
 			"use_os_player":               false,
 			"video_platform":              1024,
 		},
-		"content_type": 1,
+		"content_type": contentType,
 		"video_id":     episodeID,
 	})
 }

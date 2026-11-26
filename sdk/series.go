@@ -183,6 +183,7 @@ func (c *Client) seriesDetail(ctx context.Context, seriesID string) (*model.Seri
 			}
 		}
 	}
+	c.noteEpisodeContentTypes(episodes)
 	return series, episodes, nil
 }
 

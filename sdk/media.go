@@ -9,6 +9,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/beilunyang/openhongguo/internal/drm"
@@ -264,7 +266,40 @@ var videoModelV5Hosts = []string{
 // response is the flat layout: data.video_model, parsed by
 // protocol.ParsePlayback directly.
 func (c *Client) resolvePlaybackViaVideoModelV5(ctx context.Context, p *DeviceProfile, episodeID string) (*model.Playback, error) {
-	rawBody, err := protocol.PlaybackVideoModelBody(episodeID)
+	ct := c.episodeContentType(episodeID)
+	playback, err := c.videoModelV5Attempt(ctx, p, episodeID, int(ct))
+	if isContentGoneCode(err) && ct != model.ContentPUGC {
+		// 登记缺失或不准时的兜底：PUGC(1001) 要求 content_type 与单集
+		// 一致，写死 1 必然 101000；用 1001 重试一次，命中后回写登记，
+		// 同集后续直接用对的值（2026-11-26 实测）。
+		if pb2, err2 := c.videoModelV5Attempt(ctx, p, episodeID, int(model.ContentPUGC)); pb2 != nil {
+			c.noteEpisodeContentType(episodeID, model.ContentPUGC)
+			return pb2, err2
+		}
+	}
+	return playback, err
+}
+
+// isContentGoneCode 报告 video_model 直打的解析错误是否为上游内容域
+// 错误（1010xx；protocol.ParsePlayback 以 "playback code N" 形式返回）。
+func isContentGoneCode(err error) bool {
+	if err == nil {
+		return false
+	}
+	const prefix = "playback code "
+	msg := err.Error()
+	i := strings.Index(msg, prefix)
+	if i < 0 {
+		return false
+	}
+	code, cerr := strconv.Atoi(strings.TrimSpace(msg[i+len(prefix):]))
+	return cerr == nil && code >= 101000 && code < 101200
+}
+
+// videoModelV5Attempt 以指定 content_type 发一次稀疏签名 video_model
+// 直打（contentType <= 0 时请求体回落 1）。
+func (c *Client) videoModelV5Attempt(ctx context.Context, p *DeviceProfile, episodeID string, contentType int) (*model.Playback, error) {
+	rawBody, err := protocol.PlaybackVideoModelBodyFor(episodeID, contentType)
 	if err != nil {
 		return nil, err
 	}

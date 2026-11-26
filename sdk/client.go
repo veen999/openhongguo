@@ -64,6 +64,12 @@ type Client struct {
 	configSnap   *ConfigSnapshot
 	contentKeyMu sync.Mutex
 	contentKeys  map[string]string
+	// epContentMu 保护 epContentTypes：分集 id → 该集 content_type，
+	// 由详情/选集解析时顺手登记（见 series.go 的 seriesDetail），取址
+	// 时据此组 video_model 请求体——PUGC(1001) 等类型上游要求
+	// content_type 与单集一致，写死 1 会被回 101000（2026-11-26 实测）。
+	epContentMu    sync.Mutex
+	epContentTypes map[string]model.ContentType
 	// audioToneMu 保护 audioToneLists：一本书未指定音色时的候选音色
 	// 顺序按 book_id 缓存（见 reader.go 的 audioToneCandidates），逐章
 	// 播放不重复查音色表。
